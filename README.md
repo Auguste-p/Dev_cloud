@@ -293,11 +293,13 @@ Question : Quelle est la différence entre une image Docker et un conteneur Dock
 Réponse : Une image Docker est un modèle immuable (template) qui contient l’application, ses dépendances et sa configuration. Un conteneur Docker est une instance de cette image, avec son propre état. On peut créer plusieurs conteneurs à partir de la même image.
 
 ## 5.5 — Nettoyage Docker
-# Arrêter le conteneur
+Arrêter le conteneur
 docker stop tp1-container
-# Supprimer le conteneur (une fois arrêté)
+
+Supprimer le conteneur (une fois arrêté)
 docker rm tp1-container
-# Vérifier qu'il n'y a plus de conteneur actif
+
+Vérifier qu'il n'y a plus de conteneur actif
 docker ps
 
 
@@ -355,31 +357,30 @@ Si le service account est compromis (clé fuite, conteneur piraté, bug), l’at
 PROJECT_ID=$(gcloud config get-value project)
 SA_EMAIL="tp1-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# Générer une clé JSON (fichier de credentials)
+Générer une clé JSON (fichier de credentials)
 gcloud iam service-accounts keys create /tmp/tp1-sa-key.json \
 --iam-account=${SA_EMAIL}
 
-# Vérifier que le fichier est créé
+Vérifier que le fichier est créé
 ls -lh /tmp/tp1-sa-key.json
 
-# Activer le Service Account dans gcloud (différent de GOOGLE_APPLICATION_CREDENTIALS
-# qui est réservé aux SDKs Python/Java/Go, pas à la CLI gcloud)
+Activer le Service Account dans gcloud (différent de GOOGLE_APPLICATION_CREDENTIALS qui est réservé aux SDKs Python/Java/Go, pas à la CLI gcloud)
 gcloud auth activate-service-account \
 --key-file=/tmp/tp1-sa-key.json
 
-# Vérifier que gcloud utilise bien le SA
+Vérifier que gcloud utilise bien le SA
 gcloud auth list
 
-# Tester : essayer de créer un bucket avec ce SA
-# Cela doit ÉCHOUER car le SA n'a que roles/storage.objectViewer (lecture seule)
+Tester : essayer de créer un bucket avec ce SA
+Cela doit ÉCHOUER car le SA n'a que roles/storage.objectViewer (lecture seule)
 gcloud storage buckets create gs://test-sa-${PROJECT_ID} \
 --location=europe-west9 2>&1 || echo "Accès refusé (attendu : le SA n'a pas les droits de
 création de bucket)"
 
-# Remettre l'authentification de votre compte utilisateur
+Remettre l'authentification de votre compte utilisateur
 gcloud auth login
 
-# Supprimer la clé (bonne pratique : éviter les clés qui traînent)
+Supprimer la clé (bonne pratique : éviter les clés qui traînent)
 rm /tmp/tp1-sa-key.json
 gcloud iam service-accounts keys list \
 --iam-account=${SA_EMAIL}
@@ -403,18 +404,18 @@ docker run -d \
     -e APP_ENV=debug \
     tp1-flask:v1
 
-# Vérifier qu'il tourne
+Vérifier qu'il tourne
 docker ps
 
 ## 7.2 — Inspecter un conteneur
-# Voir la configuration complète du conteneur (JSON détaillé)
+Voir la configuration complète du conteneur (JSON détaillé)
 docker inspect tp1-debug
 
-# Extraire uniquement l'adresse IP du conteneur
+Extraire uniquement l'adresse IP du conteneur
 docker inspect tp1-debug \
 --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 
-# Voir les variables d'environnement injectées
+Voir les variables d'environnement injectées
 docker inspect tp1-debug \
 --format='{{range .Config.Env}}{{println .}}{{end}}'
 
@@ -425,42 +426,42 @@ Réponse : debug
 # Ouvrir un shell interactif dans le conteneur (comme SSH)
 docker exec -it tp1-debug /bin/sh
 
-# Utiliser /bin/sh (pas bash sur slim)
-# Une fois dans le conteneur :
-# - Vérifier les processus actifs
-ps aux
+Utiliser /bin/sh (pas bash sur slim)
+Une fois dans le conteneur :
+- Vérifier les processus actifs
+    ps aux
 
-# - Vérifier les fichiers copiés
-ls -la /app/
+- Vérifier les fichiers copiés
+    ls -la /app/
 
-# - Vérifier les variables d'environnement
-env | grep APP
+- Vérifier les variables d'environnement
+    env | grep APP
 
-# - Tester la connexion réseau depuis le conteneur
-wget -qO- http://localhost:5173/health
+- Tester la connexion réseau depuis le conteneur
+    wget -qO- http://localhost:5173/health
 
-# Quitter le conteneur (sans l'arrêter)
+Quitter le conteneur (sans l'arrêter)
 exit
 
-# Exécuter une commande sans ouvrir un shell interactif
+Exécuter une commande sans ouvrir un shell interactif
 docker exec tp1-debug env | grep APP
 
 ## 7.4 — Surveiller les ressources consommées
-# Voir les stats CPU/RAM en temps réel (Ctrl+C pour quitter)
+Voir les stats CPU/RAM en temps réel (Ctrl+C pour quitter)
 docker stats tp1-debug
 
-# Voir les statistiques une seule fois (pas de flux continu)
+Voir les statistiques une seule fois (pas de flux continu)
 docker stats --no-stream tp1-debug
 
 Question : combien de RAM consomme votre application Flask au repos ?
 Réponse : MEM USAGE / LIMIT - 32.33MiB / 3.884GiB
 
-# Voir les logs avec filtre temporel
+Voir les logs avec filtre temporel
 docker logs --since="5m" tp1-debug # Logs des 5 dernières minutes
 docker logs --tail=20 tp1-debug # 20 dernières lignes
 
 ## 7.5 — Analyser la taille de l'image par couche
-# Voir l'historique des layers et leur taille
+Voir l'historique des layers et leur taille
 docker history tp1-flask:v1
 
 Question : quelle couche est la plus volumineuse et pourquoi ?
@@ -468,5 +469,5 @@ Réponse :
 <missing>      4 days ago       # debian.sh --arch 'arm64' out/ 'trixie' '@1…   100MB     debuerreotype 0.17
 Cette image est la plus volumineuse car elle correspond à la couche de base du système Debian construite par debuerreotype
 
-# Nettoyage
+Nettoyage
 docker stop tp1-debug && docker rm tp1-debug
