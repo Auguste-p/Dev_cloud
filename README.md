@@ -305,106 +305,168 @@ docker ps
 IAM (Identity and Access Management) est le système de contrôle d'accès de GCP. Il répond à la question : "Qui peut faire quoi sur quelle ressource ?"
 
 ## 6.1 — Explorer les rôles IAM
-# Lister les membres IAM de votre projet
+Lister les membres IAM de votre projet
 gcloud projects get-iam-policy $(gcloud config get-value project)
-# Lister les rôles prédéfinis disponibles pour Cloud Storage
+
+Lister les rôles prédéfinis disponibles pour Cloud Storage
 gcloud iam roles list --filter="name:roles/storage" \
 --format="table(name,title)"
-# Question : Quelle est la différence entre roles/storage.admin
-# et roles/storage.objectViewer ?
-# Réponse :
+
+Question : Quelle est la différence entre roles/storage.admin et roles/storage.objectViewer ?
+Réponse : roles/storage.admin donne des droits d’administration complets sur Cloud Storage : créer/supprimer des buckets, gérer les objets, modifier IAM/policies selon le périmètre attribué.
+roles/storage.objectViewer est en lecture seule sur les objets (lister/lire/télécharger), sans droit de création, suppression ni administration.
 
 ## 6.2 — Créer un Service Account
-Un Service Account est une identité pour les applications (pas pour les humains). Convention : sa@[project].iam.gserviceaccount.com
-[application]-
-PROJECT
-_
-ID=$(gcloud config get-value project)
-# Créer un Service Account pour l'application Flask
+Un Service Account est une identité pour les applications (pas pour les humains). Convention : [application]-sa@[project].iam.gserviceaccount.com
+
+PROJECT_ID=$(gcloud config get-value project)
+Créer un Service Account pour l'application Flask
 gcloud iam service-accounts create tp1-app-sa \
 --display-name="TP1 Flask App Service Account" \
 --description="SA utilisé par l'application Flask pour accéder à GCS"
-# Vérifier la création
-gcloud iam service-accounts
-_______
-# Résultat attendu : liste incluant tp1-app-sa@[project].iam.gserviceaccount.com
+
+Vérifier la création
+gcloud iam service-accounts _______
+
+Résultat attendu : liste incluant tp1-app-sa@[project].iam.gserviceaccount.com
+Résultat obtenu : TP1 Flask App Service Account    tp1-app-sa@project-5f56a395-7a91-4564-b9e.iam.gserviceaccount.com
 
 ## 6.3 — Attribuer un rôle au Service Account
 Principe du moindre privilège : donner uniquement les droits nécessaires, rien de plus.
-PROJECT
-_
-ID=$(gcloud config get-value project)
-SA
-_
-EMAIL="tp1-app-sa@${PROJECT
-_
-ID}.iam.gserviceaccount.com"
-# Donner uniquement le droit de LIRE les objets GCS (pas d'écriture, pas d'admin)
-gcloud projects add-iam-policy-binding ${PROJECT
-ID} \
-_
---member="serviceAccount:${SA
-EMAIL}" \
-_
---role="roles/storage.
-_______
-" # Utiliser objectViewer (lecture seule)
-# Vérifier les bindings du projet
-gcloud projects get-iam-policy ${PROJECT
-ID} \
-_
+
+PROJECT_ID=$(gcloud config get-value project)
+SA_EMAIL="tp1-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
+Donner uniquement le droit de LIRE les objets GCS (pas d'écriture, pas d'admin)
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+--member="serviceAccount:${SA_EMAIL}" \
+--role="roles/storage.objectViewer" # Utiliser objectViewer (lecture seule)
+
+Vérifier les bindings du projet
+gcloud projects get-iam-policy ${PROJECT_ID} \
 --flatten="bindings[].members" \
 --filter="bindings.members:tp1-app-sa"
+
 Question : Pourquoi ne faut-il pas donner le rôle roles/owner ou roles/editor à un Service Account applicatif ?
-Réponse :
+Réponse : Parce que ça viole le principe du moindre privilège. roles/owner et roles/editor donnent beaucoup trop de droits (modifier/supprimer de nombreuses ressources du projet).
+Si le service account est compromis (clé fuite, conteneur piraté, bug), l’attaquant obtient un accès très large et peut causer des dégâts majeurs.
 
 ## 6.4 — Générer et utiliser une clé de Service Account
-PROJECT
-_
-ID=$(gcloud config get-value project)
-SA
-_
-EMAIL="tp1-app-sa@${PROJECT
-_
-ID}.iam.gserviceaccount.com"
+PROJECT_ID=$(gcloud config get-value project)
+SA_EMAIL="tp1-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+
 # Générer une clé JSON (fichier de credentials)
 gcloud iam service-accounts keys create /tmp/tp1-sa-key.json \
---iam-account=${SA
-EMAIL}
-_
+--iam-account=${SA_EMAIL}
+
 # Vérifier que le fichier est créé
 ls -lh /tmp/tp1-sa-key.json
-# Activer le Service Account dans gcloud (différent de GOOGLE
-APPLICATION
-_
-_
+
+# Activer le Service Account dans gcloud (différent de GOOGLE_APPLICATION_CREDENTIALS
 # qui est réservé aux SDKs Python/Java/Go, pas à la CLI gcloud)
 gcloud auth activate-service-account \
 --key-file=/tmp/tp1-sa-key.json
-CREDENTIALS
+
 # Vérifier que gcloud utilise bien le SA
 gcloud auth list
+
 # Tester : essayer de créer un bucket avec ce SA
 # Cela doit ÉCHOUER car le SA n'a que roles/storage.objectViewer (lecture seule)
-gcloud storage buckets create gs://test-sa-${PROJECT
-ID} \
-_
+gcloud storage buckets create gs://test-sa-${PROJECT_ID} \
 --location=europe-west9 2>&1 || echo "Accès refusé (attendu : le SA n'a pas les droits de
 création de bucket)"
+
 # Remettre l'authentification de votre compte utilisateur
 gcloud auth login
+
 # Supprimer la clé (bonne pratique : éviter les clés qui traînent)
 rm /tmp/tp1-sa-key.json
 gcloud iam service-accounts keys list \
---iam-account=${SA
-EMAIL}
-_
+--iam-account=${SA_EMAIL}
 
 Question : Quelle alternative aux clés JSON GCP recommande-t-on en production pour éviter de stocker des fichiers de
 credentials ?
-Réponse (indice : mécanisme "keyless") :
+Réponse (indice : mécanisme "keyless") : En production, on recommande une approche keyless avec Workload Identity (et Service Account Impersonation selon le contexte), plutôt que des clés JSON statiques. L’application obtient des jetons temporaires via l’identité de la plateforme, sans fichier de credentials à stocker.
 
 ## 6.5 — Supprimer le Service Account (nettoyage)
-gcloud iam service-accounts delete tp1-app-sa@${PROJECT
-_
-ID}.iam.gserviceaccount.com --quiet
+gcloud iam service-accounts delete tp1-app-sa@${PROJECT_ID}.iam.gserviceaccount.com --quiet
+
+
+# Partie 7 — Docker : Commandes d'Inspection et Debug (20 min)
+Cette partie étend le TP Docker avec les commandes essentielles pour débugger un conteneur en production.
+
+## 7.1 — Relancer le conteneur Flask
+cd tp1-app
+docker run -d \
+    -p 8080:8080 \
+    --name tp1-debug \
+    -e APP_ENV=debug \
+    tp1-flask:v1
+
+# Vérifier qu'il tourne
+docker ps
+
+## 7.2 — Inspecter un conteneur
+# Voir la configuration complète du conteneur (JSON détaillé)
+docker inspect tp1-debug
+
+# Extraire uniquement l'adresse IP du conteneur
+docker inspect tp1-debug \
+--format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+
+# Voir les variables d'environnement injectées
+docker inspect tp1-debug \
+--format='{{range .Config.Env}}{{println .}}{{end}}'
+
+Question : quelle valeur a la variable APP_ENV dans le conteneur ?
+Réponse : debug
+
+## 7.3 — Exécuter des commandes dans un conteneur actif
+# Ouvrir un shell interactif dans le conteneur (comme SSH)
+docker exec -it tp1-debug /bin/sh
+
+# Utiliser /bin/sh (pas bash sur slim)
+# Une fois dans le conteneur :
+# - Vérifier les processus actifs
+ps aux
+
+# - Vérifier les fichiers copiés
+ls -la /app/
+
+# - Vérifier les variables d'environnement
+env | grep APP
+
+# - Tester la connexion réseau depuis le conteneur
+wget -qO- http://localhost:5173/health
+
+# Quitter le conteneur (sans l'arrêter)
+exit
+
+# Exécuter une commande sans ouvrir un shell interactif
+docker exec tp1-debug env | grep APP
+
+## 7.4 — Surveiller les ressources consommées
+# Voir les stats CPU/RAM en temps réel (Ctrl+C pour quitter)
+docker stats tp1-debug
+
+# Voir les statistiques une seule fois (pas de flux continu)
+docker stats --no-stream tp1-debug
+
+Question : combien de RAM consomme votre application Flask au repos ?
+Réponse : MEM USAGE / LIMIT - 32.33MiB / 3.884GiB
+
+# Voir les logs avec filtre temporel
+docker logs --since="5m" tp1-debug # Logs des 5 dernières minutes
+docker logs --tail=20 tp1-debug # 20 dernières lignes
+
+## 7.5 — Analyser la taille de l'image par couche
+# Voir l'historique des layers et leur taille
+docker history tp1-flask:v1
+
+Question : quelle couche est la plus volumineuse et pourquoi ?
+Réponse :
+<missing>      4 days ago       # debian.sh --arch 'arm64' out/ 'trixie' '@1…   100MB     debuerreotype 0.17
+Cette image est la plus volumineuse car elle correspond à la couche de base du système Debian construite par debuerreotype
+
+# Nettoyage
+docker stop tp1-debug && docker rm tp1-debug
