@@ -372,9 +372,13 @@ Le HPA maintiendra 4 réplicas en régime de pointe.
 # Créer le namespace pour Kafka
 kubectl create namespace kafka
 
-# Installer Strimzi via le fichier d'installation officiel (version 0.39)
-kubectl apply -f https://strimzi.io/install/latest?namespace=kafka \
-  -n kafka
+# Installer Strimzi via le fichier d'installation officiel (version 0.39). besoin de guillemets avec zsh sur mac
+kubectl apply -f "https://strimzi.io/install/latest?namespace=kafka" -n kafka
+
+# Nouvelle version
+kubectl apply -f https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/1.0.0/examples/kafka/kafka-ephemeral.yaml -n kafka
+
+kubectl apply -f kafka/cluster.yaml -n kafka
 
 # Vérifier que l'opérateur Strimzi est Running
 kubectl get pods -n kafka -w
@@ -450,20 +454,20 @@ spec:
 
 ```bash
 # Déployer le cluster Kafka
-kubectl apply -f kafka/cluster.yaml -n logistream
+kubectl apply -f kafka/cluster.yaml -n kafka
 
 # Suivre la progression (le cluster prend 3-5 minutes à démarrer)
-kubectl get kafka logistream-kafka -n logistream -w
+kubectl get kafka logistream-kafka -n kafka -w
 
 # Résultat attendu quand prêt :
 # NAME               DESIRED KAFKA REPLICAS   READY ...
 # logistream-kafka   3                        True
 
 # Vérifier les pods Kafka (3 brokers)
-kubectl get pods -n logistream -l strimzi.io/cluster=logistream-kafka
+kubectl get pods -n kafka -l strimzi.io/cluster=logistream-kafka
 
 # Récupérer l'adresse du bootstrap server (pour les clients)
-kubectl get kafka logistream-kafka -n logistream \
+kubectl get kafka logistream-kafka -n kafka \
   -o jsonpath='{.status.listeners[0].bootstrapServers}'
 ```
 
@@ -477,51 +481,48 @@ Créez `kafka/topics.yaml` :
 
 ```yaml
 # Topic 1 : Positions GPS des camions (flux principal)
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
-  name: truck-positions
-  namespace: logistream
+  name: logistream
+  namespace: kafka
   labels:
-    strimzi.io/cluster: logistream-kafka  # Lie ce topic au cluster ci-dessus
+    strimzi.io/cluster: logistream-kafka
 spec:
-  partitions: _______  # 6 partitions (une par zone géographique — Nord, Sud, Est, Ouest, Centre, IDF)
+  partitions: 6
   replicas: 3
   config:
-    # Rétention : 24h (les positions ne sont utiles qu'en temps réel)
     retention.ms: "86400000"
-    # Compaction : garder la dernière position par camion (clé = truck_id)
-    cleanup.policy: "_______"  # delete (pas de compaction ici, on garde l'historique)
+    cleanup.policy: "delete"
 ---
 # Topic 2 : Alertes de livraison (retards, incidents)
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: delivery-alerts
-  namespace: logistream
-  labels:
-    strimzi.io/cluster: logistream-kafka
-spec:
-  partitions: 3
-  replicas: _______  # 3 réplicas
-  config:
-    # Rétention : 7 jours (les alertes doivent être auditables)
-    retention.ms: "604800000"
-    cleanup.policy: "delete"
----
-# Topic 3 : Événements de livraison (chargement, déchargement, signature)
-apiVersion: kafka.strimzi.io/v1beta2
-kind: KafkaTopic
-metadata:
-  name: delivery-events
-  namespace: logistream
+  namespace: kafka
   labels:
     strimzi.io/cluster: logistream-kafka
 spec:
   partitions: 3
   replicas: 3
   config:
-    retention.ms: "2592000000"  # 30 jours
+    retention.ms: "604800000"
+    cleanup.policy: "delete"
+---
+# Topic 3 : Evenements de livraison (chargement, dechargement, signature)
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: delivery-events
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: logistream-kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: "2592000000"
     cleanup.policy: "delete"
 ```
 
@@ -530,7 +531,7 @@ spec:
 kubectl apply -f kafka/topics.yaml
 
 # Vérifier la création des topics
-kubectl get kafkatopics -n logistream
+kubectl get kafkatopics -n kafka
 
 # Résultat attendu :
 # NAME              CLUSTER            PARTITIONS   REPLICATION FACTOR   READY
@@ -542,13 +543,13 @@ kubectl get kafkatopics -n logistream
 kubectl run kafka-cli \
   --image=quay.io/strimzi/kafka:0.39.0-kafka-3.7.0 \
   --restart=Never \
-  -n logistream \
+  -n kafka \
   -- /bin/bash -c "bin/kafka-topics.sh \
     --bootstrap-server logistream-kafka-kafka-bootstrap:9092 \
     --list"
 
-kubectl logs kafka-cli -n logistream
-kubectl delete pod kafka-cli -n logistream
+kubectl logs kafka-cli -n kafka
+kubectl delete pod kafka-cli -n kafka
 ```
 
 ---
@@ -790,6 +791,15 @@ startConsuming().catch(err => {
 > **Question :** Dans KafkaJS, le paramètre `groupId` permet à plusieurs instances du `tracker-service` de former un **Consumer Group**. Expliquez comment Kafka distribue les partitions du topic `truck-positions` (6 partitions) entre 3 instances du consumer. Que se passe-t-il si on ajoute une 4e instance ?
 
 **Réponse :**
+Avec 6 partitions et 3 consumers dans le même groupId :
+- Kafka répartit équitablement → 2 partitions par instance
+(chaque partition est consommée par un seul consumer du groupe)
+Si on ajoute une 4e instance :
+- Kafka fait un rebalance
+- Répartition typique : 2 / 2 / 1 / 1 partitions
+Important :
+- max de parallélisme = nombre de partitions (6)
+- ajouter plus de consumers que de partitions ⇒ certains restent idle
 
 ---
 
@@ -811,10 +821,16 @@ CMD ["node", "gps-producer.js"]
 PROJECT_ID=$(gcloud config get-value project)
 
 # Builder et pusher les images
-docker build -t europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/gps-producer:v1 ./producer/
+cd producer
+npm install
+cd ..
+docker buildx build --platform linux/amd64 -t europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/gps-producer:v1 ./producer/
 docker push europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/gps-producer:v1
 
-docker build -t europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/tracker-consumer:v1 ./consumer/
+cd consumer
+npm install
+cd ..
+docker buildx build --platform linux/amd64 -t europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/tracker-consumer:v1 ./consumer/
 docker push europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/tracker-consumer:v1
 ```
 
@@ -839,7 +855,7 @@ spec:
     spec:
       containers:
         - name: gps-producer
-          image: europe-west9-docker.pkg.dev/[PROJECT_ID]/tp2-registry/gps-producer:v1
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/gps-producer:v1
           envFrom:
             - configMapRef:
                 name: logistream-config
@@ -868,7 +884,7 @@ spec:
     spec:
       containers:
         - name: tracker-consumer
-          image: europe-west9-docker.pkg.dev/[PROJECT_ID]/tp2-registry/tracker-consumer:v1
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/tracker-consumer:v1
           envFrom:
             - configMapRef:
                 name: logistream-config
@@ -882,10 +898,10 @@ spec:
 kubectl apply -f k8s/kafka-apps.yaml
 
 # Observer les logs du producer (positions GPS envoyées)
-kubectl logs -f deployment/gps-producer -n logistream
+kubectl logs -f deployment/gps-producer -n kafka
 
 # Observer les logs du consumer (positions GPS traitées)
-kubectl logs -f deployment/tracker-consumer -n logistream
+kubectl logs -f deployment/tracker-consumer -n kafka
 
 # Vérifier les offsets consommés (lag = retard du consumer)
 kubectl run kafka-consumer-groups \
@@ -897,8 +913,8 @@ kubectl run kafka-consumer-groups \
     --describe \
     --group tracker-service-group"
 
-kubectl logs kafka-consumer-groups -n logistream
-kubectl delete pod kafka-consumer-groups -n logistream
+kubectl logs kafka-consumer-groups -n kafka
+kubectl delete pod kafka-consumer-groups -n kafka
 ```
 
 ---
