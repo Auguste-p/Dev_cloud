@@ -331,8 +331,10 @@ kubectl get service api-gateway-svc -n logistream
 GATEWAY_IP=$(kubectl get service api-gateway-svc -n logistream \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
+>Mon adresse IP publique : 34.155.197.43
+
 # Tester l'application
-curl http://${GATEWAY_IP}/health
+curl http://${GATEWAY_IP}/health # On a enlevé les routes health pour faire marcher, alors celle-ci plante
 curl http://${GATEWAY_IP}/
 
 # Simuler une charge CPU pour observer le HPA en action
@@ -351,7 +353,12 @@ kubectl delete pod load-test -n logistream
 
 > **Question :** Le tracker-service reçoit 80 événements GPS/seconde en pointe. Le HPA est configuré avec `minReplicas: 2` et `maxReplicas: 10`. Si chaque pod peut traiter 20 événements/seconde à 60% CPU, combien de réplicas le HPA maintiendra-t-il en régime de pointe ?
 
-**Réponse :**
+> **Réponse :** Chaque pod traite 20 événements/s à 60% CPU → on peut le considérer comme sa capacité nominale.
+Charge totale : 80 events/s
+Capacité par pod : 20 events/s
+Nombre de pods nécessaires :
+80÷20=4
+Le HPA maintiendra 4 réplicas en régime de pointe.
 
 ---
 
