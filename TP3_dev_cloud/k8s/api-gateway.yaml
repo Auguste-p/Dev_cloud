@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: europe-west9-docker.pkg.dev/[PROJECT_ID]/tp2-registry/tp2-app:v1
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/tp2-app:v1
           ports:
             - containerPort: 8080
           # Variables depuis le ConfigMap (toutes les clés deviennent des variables d'env)

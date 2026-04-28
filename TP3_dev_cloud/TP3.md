@@ -75,7 +75,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: logistream-config
-  namespace: _______  # logistream
+  namespace: logistream
 data:
   # Configuration applicative (non sensible)
   APP_ENV: "production"
@@ -84,8 +84,7 @@ data:
   KAFKA_TOPIC_POSITIONS: "truck-positions"
   KAFKA_TOPIC_ALERTS: "delivery-alerts"
   GPS_UPDATE_INTERVAL_MS: "10000"
-  # TODO : ajouter MAX_TRUCKS avec la valeur "1000"
-  _______: "_______"
+  MAX_TRUCKS: "1000"
 ```
 
 ---
@@ -136,7 +135,7 @@ Créez `k8s/api-gateway.yaml` :
 
 ```yaml
 apiVersion: apps/v1
-kind: _______  # Deployment
+kind: Deployment
 metadata:
   name: api-gateway
   namespace: logistream
@@ -144,7 +143,7 @@ metadata:
     app: api-gateway
     team: backend
 spec:
-  replicas: _______  # 2 réplicas pour la haute disponibilité
+  replicas: 2  # 2 réplicas pour la haute disponibilité
   selector:
     matchLabels:
       app: api-gateway
@@ -160,20 +159,20 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: europe-west9-docker.pkg.dev/[PROJECT_ID]/tp2-registry/tp2-app:v1
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/tp2-app:v1
           ports:
             - containerPort: 8080
           # Variables depuis le ConfigMap (toutes les clés deviennent des variables d'env)
           envFrom:
             - configMapRef:
-                name: _______  # logistream-config
+                name: logistream-config
           # Variable individuelle depuis le Secret
           env:
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: logistream-secrets
-                  key: _______  # JWT_SECRET
+                  key: JWT_SECRET
           resources:
             requests:
               cpu: "100m"
@@ -184,7 +183,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: _______  # 8080
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
@@ -201,7 +200,7 @@ metadata:
   namespace: logistream
 spec:
   selector:
-    app: _______  # api-gateway
+    app: api-gateway
   ports:
     - port: 80
       targetPort: 8080
@@ -234,7 +233,7 @@ spec:
     spec:
       containers:
         - name: tracker-service
-          image: europe-west9-docker.pkg.dev/[PROJECT_ID]/tp2-registry/tp2-app:v1
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/tp2-app:v1
           ports:
             - containerPort: 8080
           envFrom:
@@ -245,7 +244,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: logistream-secrets
-                  key: _______  # DB_URL
+                  key: DB_URL
             - name: SERVICE_ROLE
               value: "tracker"
           resources:
@@ -293,17 +292,17 @@ metadata:
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
-    kind: _______  # Deployment
+    kind: Deployment
     name: tracker-service
   minReplicas: 2
-  maxReplicas: _______  # 10 pods maximum
+  maxReplicas: 10  # 10 pods maximum
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: _______  # Scaler si CPU > 60%
+          averageUtilization: 60  # Scaler si CPU > 60%
     - type: Resource
       resource:
         name: memory
