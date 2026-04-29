@@ -28,10 +28,13 @@ jobs:
           cache: 'npm'
 
       - name: Installer les dépendances
-        run: npm i
+        run: npm ci
+        working-directory: TP3_dev_cloud
+
 
       - name: Tests unitaires
         run: npm test
+        working-directory: TP3_dev_cloud
 
       - name: Lint du code
         run: npm run lint || echo "Lint non configuré — skip"
