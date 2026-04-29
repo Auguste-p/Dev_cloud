@@ -98,13 +98,17 @@ jobs:
 
       - name: Build & Push Producer
         run: |
-          docker buildx build --platform linux/amd64 -t ${{ steps.tags.outputs.producer-tag }}
-          docker push ${{ steps.tags.outputs.producer-tag }}
+          docker buildx build --platform linux/amd64 \
+          -t ${{ steps.tags.outputs.producer-tag }} \
+          ./producer \
+          --push
 
       - name: Build & Push Consumer
         run: |
-          docker buildx build --platform linux/amd64 -t ${{ steps.tags.outputs.consumer-tag }}
-          docker push ${{ steps.tags.outputs.consumer-tag }}
+          docker buildx build --platform linux/amd64 \
+            -t ${{ steps.tags.outputs.consumer-tag }} \
+            ./consumer \
+            --push
 
   deploy:
     name: Deploy sur GKE
