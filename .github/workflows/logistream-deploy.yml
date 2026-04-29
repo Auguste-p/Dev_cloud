@@ -96,17 +96,17 @@ jobs:
           echo "producer-tag=${REGISTRY}/${PROJECT_ID}/tp2-registry/gps-producer:${SHA}" >> $GITHUB_OUTPUT
           echo "consumer-tag=${REGISTRY}/${PROJECT_ID}/tp2-registry/tracker-consumer:${SHA}" >> $GITHUB_OUTPUT
 
-      - name: Build & Push GPS Producer
+      - name: Build & Push Producer
         run: |
           docker buildx build --platform linux/amd64 \
             -t ${{ steps.tags.outputs.producer-tag }} \
-            --push ${{ steps.tags.outputs.producer-tag }}
+            --push TP3_dev_cloud/producer
 
-      - name: Build & Push Tracker Consumer
+      - name: Build & Push Consumer
         run: |
           docker buildx build --platform linux/amd64 \
             -t ${{ steps.tags.outputs.consumer-tag }} \
-            -- push ${{ steps.tags.outputs.consumer-tag }}
+            --push TP3_dev_cloud/consumer
 
   deploy:
     name: Deploy sur GKE
