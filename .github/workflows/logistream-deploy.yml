@@ -99,13 +99,13 @@ jobs:
       - name: Build & Push GPS Producer
         run: |
           docker buildx build --platform linux/amd64 \
-            -t ${{ steps.tags.outputs.producer-tag }} ./producer/
-            -- push ${{ steps.tags.outputs.producer-tag }}
+            -t ${{ steps.tags.outputs.producer-tag }} \
+            --push ${{ steps.tags.outputs.producer-tag }}
 
       - name: Build & Push Tracker Consumer
         run: |
           docker buildx build --platform linux/amd64 \
-            -t ${{ steps.tags.outputs.consumer-tag }} ./consumer/
+            -t ${{ steps.tags.outputs.consumer-tag }} \
             -- push ${{ steps.tags.outputs.consumer-tag }}
 
   deploy:
