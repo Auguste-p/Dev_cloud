@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gps-producer
-  namespace: kafka
+  namespace: logistream
 spec:
   replicas: 1  # 1 seul producer suffit (il simule toute la flotte)
   selector:
@@ -30,7 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tracker-consumer
-  namespace: kafka
+  namespace: logistream
 spec:
   # 3 réplicas = 3 instances dans le même Consumer Group
   # Kafka distribue les 6 partitions : 2 partitions par instance
