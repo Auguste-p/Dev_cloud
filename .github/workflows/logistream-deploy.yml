@@ -71,6 +71,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug repo
+        run: echo "${{ github.repository }}"
+
       - name: Authentification GCP (WIF)
         uses: google-github-actions/auth@v2
         with:
