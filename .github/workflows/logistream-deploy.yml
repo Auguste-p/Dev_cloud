@@ -99,14 +99,14 @@ jobs:
       - name: Build & Push Producer
         run: |
           docker buildx build --platform linux/amd64 \
-            -t ${{ steps.tags.outputs.producer-tag }} \
-            --push TP3_dev_cloud/producer
+            -t ${{ steps.tags.outputs.producer-tag }}
+            docker push ${{ steps.tags.outputs.producer-tag }}
 
       - name: Build & Push Consumer
         run: |
           docker buildx build --platform linux/amd64 \
-            -t ${{ steps.tags.outputs.consumer-tag }} \
-            --push TP3_dev_cloud/consumer
+            -t ${{ steps.tags.outputs.consumer-tag }}
+            docker push ${{ steps.tags.outputs.consumer-tag }}
 
   deploy:
     name: Deploy sur GKE
