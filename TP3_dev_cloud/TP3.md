@@ -961,12 +961,42 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/_______"  # container.developer
+  --role="roles/container.developer"
 
-# Générer la clé JSON
+# Générer la clé JSON - ne marche pas, solution de remplacement en dessous
 gcloud iam service-accounts keys create cicd-key.json --iam-account=${SA_EMAIL}
 cat cicd-key.json  # Copier dans GitHub Secret GCP_SA_KEY
 rm cicd-key.json   # Supprimer immédiatement après copie
+
+# Créer un Workload Identity Pool
+gcloud iam workload-identity-pools create "github-pool" \
+  --location="global" \
+  --display-name="GitHub Pool"
+
+# Créer le provider GitHub (OIDC)
+gcloud iam workload-identity-pools providers create-oidc "github-provider" \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --display-name="GitHub Provider" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='auguste-p/Dev_cloud'"
+
+# Autoriser GitHub à utiliser le Service Account
+gcloud iam service-accounts add-iam-policy-binding \
+  logistream-cicd-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/auguste-p/Dev_cloud"
+
+# Récupérer ces 2 valeurs
+# Provider
+gcloud iam workload-identity-pools providers describe github-provider \
+  --location=global \
+  --workload-identity-pool=github-pool \
+  --format="value(name)"
+
+# Service account, en dur pour le mettre en github secret
+logistream-cicd-sa@$project-5f56a395-7a91-4564-b9e.iam.gserviceaccount.com
 ```
 
 ---

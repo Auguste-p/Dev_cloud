@@ -4,4 +4,4 @@ COPY package*.json ./
 RUN npm ci --only=production
 COPY . .
 USER node
-CMD ["node", "gps-consumer.js"]
+CMD ["node", "tracker-consumer.js"]
