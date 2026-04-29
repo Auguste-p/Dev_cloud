@@ -980,13 +980,13 @@ gcloud iam workload-identity-pools providers create-oidc "github-provider" \
   --display-name="GitHub Provider" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository=='auguste-p/Dev_cloud'"
+  --attribute-condition="assertion.repository=='Auguste-p/Dev_cloud'"
 
 # Autoriser GitHub à utiliser le Service Account
 gcloud iam service-accounts add-iam-policy-binding \
   logistream-cicd-sa@${PROJECT_ID}.iam.gserviceaccount.com \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/auguste-p/Dev_cloud"
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-pool/attribute.repository/Auguste-p/Dev_cloud"
 
 # Récupérer ces 2 valeurs
 # Provider
