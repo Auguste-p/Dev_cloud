@@ -100,14 +100,14 @@ jobs:
         run: |
           docker buildx build --platform linux/amd64 \
           -t ${{ steps.tags.outputs.producer-tag }} \
-          ./producer \
+          ./TP3_Dev_cloud/producer \
           --push
 
       - name: Build & Push Consumer
         run: |
           docker buildx build --platform linux/amd64 \
             -t ${{ steps.tags.outputs.consumer-tag }} \
-            ./consumer \
+            ./TP3_Dev_cloud/consumer \
             --push
 
   deploy:
