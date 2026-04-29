@@ -963,7 +963,7 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/container.developer"
 
-# Générer la clé JSON - ne marche pas, solution de remplacement en dessous
+# Générer la clé JSON - ne marche pas, solution de remplacement avec WIF en dessous
 gcloud iam service-accounts keys create cicd-key.json --iam-account=${SA_EMAIL}
 cat cicd-key.json  # Copier dans GitHub Secret GCP_SA_KEY
 rm cicd-key.json   # Supprimer immédiatement après copie
