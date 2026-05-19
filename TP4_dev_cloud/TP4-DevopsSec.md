@@ -12,7 +12,7 @@
 
 > **Prérequis validés (Cours 3) :**
 > - Cluster GKE Autopilot opérationnel (`tp3-cluster`)
-> - Pipeline GitHub Actions fonctionnel (TP3)
+> - Pipeline GitHub Actions fonctionnel (tp2)
 > - Artifact Registry configuré avec des images Docker pushées
 
 **Objectifs de ce TP :**
@@ -54,14 +54,14 @@ echo -n "finsecure-db-password-prod-2026" | \
 echo -n "sk_live_demo_finsecure_stripe_key" | \
   gcloud secrets create finsecure-stripe-key \
   --data-file=- \
-  --replication-policy=_______   # automatic
+  --replication-policy=automatic   # automatic
 
 # Lister les secrets créés
 gcloud secrets list --filter="labels.app=finsecure"
 
 # Lire la valeur d'un secret (accès audité)
 gcloud secrets versions access latest \
-  --secret="_______"   # finsecure-db-password
+  --secret="finsecure-db-password"   # finsecure-db-password
 
 # Voir l'historique d'accès dans Cloud Audit Logs
 gcloud logging read \
@@ -72,7 +72,25 @@ gcloud logging read \
 
 **Question :** En dehors de Secret Manager, citez deux autres solutions GCP pour gérer des configurations sensibles dans Kubernetes, et expliquez quand utiliser chacune.
 ```
-Réponse :
+Réponse : 
+1. Kubernetes Secrets
+   Permet de stocker des données sensibles directement dans Kubernetes (mots de passe, tokens, clés API).
+   À utiliser lorsque :
+   - les secrets sont uniquement utilisés à l’intérieur du cluster ;
+   - on veut une intégration simple avec les Pods via variables d’environnement ou volumes ;
+   - les besoins de sécurité restent “standards”.
+
+   Limite : les données sont seulement encodées en base64 par défaut, donc moins sécurisé sans chiffrement etcd/KMS.
+
+2. Config Connector + Cloud KMS (Key Management Service)
+   Permet de chiffrer les secrets avec des clés gérées par GCP.
+   À utiliser lorsque :
+   - on a des exigences fortes de sécurité/compliance ;
+   - on veut gérer rotation, audit et contrôle d’accès centralisé des clés ;
+   - plusieurs services GCP doivent partager une même politique de chiffrement.
+
+   Typiquement utilisé dans les environnements de production critiques ou réglementés.
+
 ```
 
 ---
@@ -112,11 +130,10 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/_______"   # container.developer (déploiement GKE)
+  --role="roles/container.developer"   # container.developer (déploiement GKE)
 
 # Lier GitHub au Service Account via le pool
-# Remplacer GITHUB_ORG/REPO par votre dépôt
-REPO="VOTRE_GITHUB_ORG/ynov-cloud-tp4"
+REPO="https://github.com/Auguste-p/Dev_cloud"
 
 gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
   --role="roles/iam.workloadIdentityUser" \
@@ -128,6 +145,7 @@ echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-p
 ```
 
 Mettez à jour `.github/workflows/deploy.yml` pour utiliser Workload Identity :
+On l'a déjà fait dans le TP précédent car on ne peut plus passer par les clefs, on est obligés d'utiliser WIF.
 
 ```yaml
 # Remplacer le bloc d'authentification existant par :
@@ -142,6 +160,13 @@ Mettez à jour `.github/workflows/deploy.yml` pour utiliser Workload Identity :
 **Question :** Pourquoi Workload Identity Federation est-il plus sécurisé qu'une clé JSON de Service Account ? Quel risque élimine-t-il concrètement pour FinSecure ?
 ```
 Réponse :
+Workload Identity Federation (WIF) est plus sécurisé qu’une clé JSON de Service Account car il évite de stocker des identifiants permanents dans GitHub Actions ou dans le dépôt.
+- Avec une clé JSON, la clé est statique et longue durée. Si elle fuite (commit Git, log CI, machine compromise), un attaquant peut accéder au projet GCP tant que la clé n’est pas révoquée,
+elle peut être copiée et réutilisée n’importe où.
+- Avec WIF, GitHub échange temporairement un token OIDC contre des credentials GCP courts ;
+aucun secret permanent n’est stocké, l’accès peut être limité à un repository, une branche ou un workflow précis.
+
+Pour FinSecure, cela élimine concrètement le risque de fuite ou de vol d’une clé JSON donnant un accès durable à l’infrastructure cloud (clusters Kubernetes, registres Docker, données sensibles, etc.).
 ```
 
 ---
@@ -156,14 +181,37 @@ gcloud services enable containeranalysis.googleapis.com
 gcloud services enable containerscanning.googleapis.com
 
 # Pousser une image et observer le scan automatique
-# (utiliser l'image tp3-app déjà pushée dans Artifact Registry)
+# (utiliser l'image tp2-app déjà pushée dans Artifact Registry)
 PROJECT_ID=$(gcloud config get-value project)
-IMAGE="europe-west9-docker.pkg.dev/${PROJECT_ID}/tp3-app-registry/tp3-app:latest"
+IMAGE="europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/tp2-app:latest"
 
 # Lister les vulnérabilités détectées par Artifact Registry
-gcloud artifacts docker images list-vulnerabilities ${IMAGE} \
-  --format="table(vulnerability.effectiveSeverity,vulnerability.packageIssue[0].affectedPackage,vulnerability.shortDescription)" \
-  --filter="vulnerability.effectiveSeverity=CRITICAL OR vulnerability.effectiveSeverity=HIGH"
+PROJECT_ID=$(gcloud config get-value project) \
+  && IMAGE="europe-west9-docker.pkg.dev/${PROJECT_ID}/tp2-registry/gps-producer@sha256:71ea29de940f40ef47f759e5ef5bf0c29c110548c4a95f438ff3ca25e0ff4bfb" \
+  && SCAN=$(gcloud artifacts docker images scan ${IMAGE} \
+      --remote \
+      --location=europe \
+      --format="value(response.scan)") \
+  && gcloud artifacts docker images list-vulnerabilities ${SCAN} \
+      --format="table(vulnerability.effectiveSeverity,vulnerability.packageIssue[0].affectedPackage,vulnerability.shortDescription)"
+
+EFFECTIVE_SEVERITY  AFFECTED_PACKAGE  SHORT_DESCRIPTION
+LOW                 brace-expansion   CVE-2025-5889
+HIGH                minimatch         CVE-2026-27904
+MEDIUM              ip-address        CVE-2026-42338
+HIGH                tar               CVE-2026-29786
+HIGH                tar               CVE-2026-26960
+HIGH                tar               CVE-2026-23745
+HIGH                tar               CVE-2026-23950
+HIGH                tar               CVE-2026-24842
+LOW                 diff              CVE-2026-24001
+HIGH                cross-spawn       CVE-2024-21538
+HIGH                minimatch         CVE-2026-26996
+HIGH                glob              CVE-2025-64756
+HIGH                tar               CVE-2026-31802
+HIGH                minimatch         CVE-2026-27903
+MEDIUM              brace-expansion   CVE-2026-33750
+
 ```
 
 Ajoutez un job de scan `trivy` dans `.github/workflows/deploy.yml` :
@@ -176,7 +224,7 @@ Ajoutez un job de scan `trivy` dans `.github/workflows/deploy.yml` :
   security-scan:
     name: Scan Vulnérabilités
     runs-on: ubuntu-latest
-    needs: _______   # Dépend du job build-push
+    needs: build-push   # Dépend du job build-push
 
     steps:
       - name: Installer Trivy (scanner open-source CVE)
@@ -198,8 +246,8 @@ Ajoutez un job de scan `trivy` dans `.github/workflows/deploy.yml` :
       - name: Scanner l'image pour les vulnérabilités critiques
         run: |
           trivy image \
-            --exit-code _______   # 1 = échouer si des vulnérabilités sont trouvées
-            --severity "_______"  # CRITICAL,HIGH
+            --exit-code 1   # 1 = échouer si des vulnérabilités sont trouvées
+            --severity "CRITICAL,HIGH"  # CRITICAL,HIGH
             --ignore-unfixed \
             --format table \
             ${{ needs.build-push.outputs.image-tag }}
@@ -220,6 +268,20 @@ Ajoutez un job de scan `trivy` dans `.github/workflows/deploy.yml` :
 **Question :** Dans le pipeline CI/CD de FinSecure, pourquoi place-t-on le scan de sécurité (`security-scan`) après le build mais avant le déploiement ? Que se passerait-il si on le plaçait après le déploiement en production ?
 ```
 Réponse :
+On place le scan de sécurité après le build mais avant le déploiement pour analyser l’image Docker réellement produite et empêcher qu’une image vulnérable arrive en production.
+
+Le pipeline suit donc cette logique :
+1. Build de l’image
+2. Scan des vulnérabilités (CVEs, dépendances critiques, packages dangereux)
+3. Déploiement seulement si le scan est valide
+
+Si le scan était placé après le déploiement :
+- Une image vulnérable pourrait déjà être en production
+- Les utilisateurs et données seraient exposés pendant le temps de détection
+- Il faudrait faire un rollback ou un patch en urgence
+- Cela casse le principe “shift-left security” du DevSecOps
+
+Pour FinSecure, cela pourrait exposer des données sensibles avant même que la faille soit détectée.
 ```
 
 ---
@@ -230,7 +292,7 @@ Réponse :
 # Activer Workload Identity sur le cluster GKE (si pas déjà fait via Terraform)
 gcloud container clusters update tp3-cluster \
   --workload-pool="${PROJECT_ID}.svc.id.goog" \
-  --region=europe-west9
+  --region=europe-west9-a
 
 # Créer un Kubernetes Service Account pour l'application FinSecure
 kubectl create serviceaccount finsecure-app-ksa \
@@ -244,14 +306,14 @@ kubectl annotate serviceaccount finsecure-app-ksa \
 # Autoriser le KSA à impersonner le GSA
 gcloud iam service-accounts add-iam-policy-binding \
   "finsecure-github-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="_______" \
-  --member="serviceAccount:${PROJECT_ID}.svc.id.goog[default/finsecure-app-ksa]"
+  --role="roles/iam.workloadIdentityUser" \
+  --member="serviceAccount:${PROJECT_ID}.svc.id.goog[default/finsecure-app-ksa]" 
 # Rôle à utiliser : roles/iam.workloadIdentityUser
 
 # Accorder au GSA les droits de lecture sur Secret Manager
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
   --member="serviceAccount:finsecure-github-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="_______"
+  --role="roles/secretmanager.secretAccessor"
 # Rôle à utiliser : roles/secretmanager.secretAccessor
 
 # Vérifier la configuration
@@ -261,45 +323,75 @@ kubectl describe serviceaccount finsecure-app-ksa
 Mettez à jour `k8s/deployment.yaml` pour utiliser le KSA et accéder aux secrets :
 
 ```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tp2-app
+  namespace: default
+  labels:
+    app: tp2-app
 spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tp2-app
+ 
+  # Stratégie de mise à jour sans interruption
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1         # Max 1 pod supplémentaire pendant la mise à jour
+      maxUnavailable: 0   # 0 : aucun pod indisponible pendant la mise à jour
+ 
   template:
+    metadata:
+      labels:
+        app: tp2-app
     spec:
-      serviceAccountName: _______   # finsecure-app-ksa
-
-      initContainers:
-        # Init container qui récupère le secret depuis Secret Manager au démarrage
-        - name: fetch-secrets
-          image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-          command:
-            - /bin/sh
-            - -c
-            - |
-              gcloud secrets versions access latest \
-                --secret="finsecure-db-password" \
-                --project="${PROJECT_ID}" \
-                > /secrets/db-password
-          volumeMounts:
-            - name: secrets-vol
-              mountPath: /secrets
-
       containers:
-        - name: tp3-app
-          # ... (existant)
+        - name: tp2-app
+          image: europe-west9-docker.pkg.dev/project-5f56a395-7a91-4564-b9e/tp2-registry/tp2-app:v1
+ 
+          ports:
+            - containerPort: 8080
+ 
+          # Ressources allouées au conteneur
+          resources:
+            requests:
+              cpu: "100m"      # 100 millicores = 0.1 vCPU
+              memory: "128Mi"
+            limits:
+              cpu: "500m"      # Limite à 500m (0.5 vCPU)
+              memory: "512Mi"
+ 
+          # Variables d'environnement depuis le ConfigMap
+          envFrom:
+            - configMapRef:
+                name: tp2-app-config
+ 
+          # Variables d'environnement depuis le Secret
           env:
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: tp3-app-secret
+                  name: tp2-app-secret
                   key: DB_PASSWORD
-          volumeMounts:
-            - name: secrets-vol
-              mountPath: /secrets
-              readOnly: _______   # true
-
-      volumes:
-        - name: secrets-vol
-          emptyDir:
-            medium: Memory   # Stocké en RAM uniquement (jamais sur disque)
+ 
+          # Probe de disponibilité (Kubernetes coupe le trafic si elle échoue)
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+ 
+          # Probe de vie (Kubernetes redémarre le pod si elle échoue)
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
 ```
 
 ---
@@ -325,8 +417,8 @@ gcloud pubsub subscriptions create finsecure-payment-processor \
 # Créer un Dead Letter Topic (pour les messages en échec après 5 tentatives)
 gcloud pubsub topics create finsecure-payment-dead-letter
 
-gcloud pubsub subscriptions modify-push-config finsecure-payment-processor \
-  --dead-letter-topic=_______   # finsecure-payment-dead-letter \
+gcloud pubsub subscriptions update finsecure-payment-processor \
+  --dead-letter-topic=finsecure-payment-dead-letter \
   --max-delivery-attempts=5
 
 # Publier un message de test (simule un webhook bancaire)
@@ -342,6 +434,12 @@ gcloud pubsub subscriptions pull finsecure-payment-processor \
 **Question :** Expliquez la différence entre une subscription **push** et une subscription **pull** dans Pub/Sub. Dans quel cas utiliserait-on chacune pour FinSecure ?
 ```
 Réponse :
+Push : Pub/Sub envoie automatiquement les messages au service.
+Pull : le consommateur vient chercher les messages quand il veut.
+
+Pour FinSecure :
+Push : pour les actions immédiates
+Pull : pour les traitements analytiques et massifs
 ```
 
 ---
@@ -373,7 +471,7 @@ const secretClient = new SecretManagerServiceClient();
 exports.processPayment = async (message, context) => {
   // Décoder le message Pub/Sub (encodé en base64)
   const payload = message.data
-    ? Buffer.from(message.data, '_______').toString()   // 'base64'
+    ? Buffer.from(message.data, 'base64').toString()   // 'base64'
     : '{}';
 
   let transaction;
@@ -393,7 +491,7 @@ exports.processPayment = async (message, context) => {
   // Valider les champs obligatoires
   const requiredFields = ['transaction_id', 'amount', 'currency', 'status', 'merchant_id'];
   for (const field of requiredFields) {
-    if (!transaction[_______]) {   // field
+    if (!transaction[field]) {   // field
       console.error(`Champ manquant : ${field}`);
       return;   // ACK le message invalide sans retry
     }
@@ -456,7 +554,7 @@ gcloud functions deploy finsecure-payment-processor \
   --region=europe-west9 \
   --source=. \
   --entry-point=processPayment \
-  --trigger-topic=_______   \
+  --trigger-topic=finsecure-payment-events   \
   --set-env-vars=GCP_PROJECT=$(gcloud config get-value project) \
   --service-account=finsecure-github-sa@$(gcloud config get-value project).iam.gserviceaccount.com \
   --max-instances=10 \
@@ -501,6 +599,28 @@ gcloud monitoring metrics-descriptors list \
   --filter="metric.type:cloudfunctions.googleapis.com" \
   --format="value(type)" | head -10
 
+# UPDATE : la commande ci-dessus ne fonctionne pas, celle ci la remplace
+TOKEN=$(gcloud auth print-access-token)
+
+curl -s \
+  "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/metricDescriptors?filter=metric.type%3Dstarts_with(%22cloudfunctions.googleapis.com%22)" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for d in data.get('metricDescriptors', []):
+    print(d['type'])
+" | head -10"
+
+# Réponse
+cloudfunctions.googleapis.com/function/active_instances
+cloudfunctions.googleapis.com/function/execution_count
+cloudfunctions.googleapis.com/function/execution_times
+cloudfunctions.googleapis.com/function/instance_count
+cloudfunctions.googleapis.com/function/network_egress
+cloudfunctions.googleapis.com/function/user_memory_bytes
+cloudfunctions.googleapis.com/pending_queue/pending_requests
+
 # Simuler un message invalide (doit être ACK sans retry)
 gcloud pubsub topics publish finsecure-payment-events \
   --message='payload_corrompu_non_json'
@@ -514,7 +634,28 @@ gcloud functions logs read finsecure-payment-processor \
 **Question :** Dans cette architecture event-driven, pourquoi la Cloud Function ne doit-elle **pas** lever une exception (throw) pour un message JSON invalide ? Quel serait le comportement de Pub/Sub si elle le faisait ?
 ```
 Réponse :
+Parce que dans Google Cloud Pub/Sub, si la Cloud Function lève une exception (throw), Pub/Sub considère que le traitement a échoué.
+
+Conséquence :
+- Le message n’est pas ack
+- Pub/Sub va le réessayer automatiquement
+- Le même message invalide sera renvoyé encore et encore
+
+Cela peut provoquer :
+- Une boucle infinie de retries
+- Des coûts inutiles
+- Du bruit dans les logs
+- Un blocage du pipeline
+
+Donc pour un JSON invalide (erreur non récupérable), il vaut mieux :
+- Logger l’erreur
+- Ignorer le message
+- Terminer la fonction sans exception
+
+On ne throw que pour des erreurs temporaires (DB indisponible, timeout réseau, etc.) où un retry peut réussir plus tard.
 ```
+![Envoi de messages](images/envoi_message.png)
+
 
 ---
 
@@ -531,8 +672,8 @@ gcloud pubsub topics create finsecure-scheduled-tasks
 
 # Job 1 : Rapport de réconciliation quotidien à 23h00 (Paris)
 gcloud scheduler jobs create pubsub finsecure-daily-reconciliation \
-  --location=europe-west9 \
-  --schedule="_______" \
+  --location=europe-west1 \ # europe-west9 n'existe pas
+  --schedule="0 23 * * *" \
   --time-zone="Europe/Paris" \
   --topic=finsecure-scheduled-tasks \
   --message-body='{"task":"daily_reconciliation","date":"$(date +%Y-%m-%d)"}' \
@@ -541,21 +682,23 @@ gcloud scheduler jobs create pubsub finsecure-daily-reconciliation \
 
 # Job 2 : Purge hebdomadaire le dimanche à 02h00
 gcloud scheduler jobs create pubsub finsecure-weekly-purge \
-  --location=europe-west9 \
+  --location=europe-west1 \ # europe-west9 n'existe pas
   --schedule="0 2 * * 0" \
-  --time-zone="_______" \
+  --time-zone="Europe/Paris" \
   --topic=finsecure-scheduled-tasks \
   --message-body='{"task":"purge_old_transactions","retention_days":90}' \
   --description="Purge hebdomadaire des transactions > 90 jours"
 # Timezone : Europe/Paris
 
 # Lister les jobs planifiés
-gcloud scheduler jobs list --location=europe-west9
+gcloud scheduler jobs list --location=europe-west1
 
 # Déclencher manuellement pour tester (sans attendre le schedule)
 gcloud scheduler jobs run finsecure-daily-reconciliation \
   --location=europe-west9
+
 ```
+![Jobs plannifiés](images/planned_jobs.png)
 
 ---
 
@@ -578,16 +721,16 @@ PROJECT_ID=$(gcloud config get-value project)
 
 # Appliquer des labels sur le cluster GKE
 gcloud container clusters update tp3-cluster \
-  --region=europe-west9 \
-  --update-labels="team=infra,environment=_______,feature=platform,cost-center=engineering"
+  --region=europe-west9-a \
+  --update-labels="team=infra,environment=production,feature=platform,cost-center=engineering"
 
 # Appliquer des labels sur le repository Artifact Registry
-gcloud artifacts repositories add-iam-policy-binding tp3-app-registry \
+gcloud artifacts repositories add-iam-policy-binding tp2-registry \
   --location=europe-west9 \
   --member="allUsers" \
   --role="roles/artifactregistry.reader" 2>/dev/null || true
 
-gcloud artifacts repositories update tp3-app-registry \
+gcloud artifacts repositories update tp2-registry \
   --location=europe-west9 \
   --update-labels="team=infra,environment=production,feature=platform"
 
@@ -598,13 +741,20 @@ gcloud functions deploy finsecure-payment-processor \
 
 # Vérifier les labels appliqués
 gcloud container clusters describe tp3-cluster \
-  --region=europe-west9 \
+  --region=europe-west9-a \
   --format="value(resourceLabels)"
 ```
 
 **Question :** FinSecure facture ses services de paiement à trois clients : "BoutiqueA", "MarketplaceB" et "EcommerceC". Comment adapteriez-vous la stratégie de labeling pour permettre une facturation interne (chargeback) par client ? Quels labels ajouteriez-vous ?
 ```
 Réponse :
+| Label              | BoutiqueA         | MarketplaceB   | EcommerceC   | Pourquoi                         |
+| ------------------ | ----------------- | -------------- | ------------ | -------------------------------- |
+| `client`           | `boutiqueA`       | `marketplaceB` | `ecommerceC` | Identification directe du client |
+| `cost-center`      | `CC-001`          | `CC-002`       | `CC-003`     | Mapping comptable                |
+| `billing-model`    | `per-transaction` | `flat-rate`    | `tiered`     | Modèle contractuel               |
+| `service-tier`     | `standard`        | `premium`      | `enterprise` | Niveau de SLA                    |
+
 ```
 
 ---
@@ -627,7 +777,7 @@ gcloud billing budgets create \
   --threshold-rule=percent=0.5 \
   --threshold-rule=percent=0.9 \
   --threshold-rule=percent=1.0 \
-  --all-updates-rule-pubsub-topic="projects/${PROJECT_ID}/topics/finsecure-scheduled-tasks"
+  --notifications-rule-pubsub-topic="projects/${PROJECT_ID}/topics/finsecure-scheduled-tasks" # --notifications-rule-pubsub-topic remplace all-updates-rule-pubsub-topic
 
 # Vérifier la création du budget
 gcloud billing budgets list \
@@ -641,10 +791,84 @@ Console GCP → Billing → Budgets & alerts
 → Vérifier les seuils : 50%, 90%, 100%
 → Observer : "Spend to date" vs "Budget amount"
 ```
+![Budget FinSecure](images/budget_finsecure.png)
 
 **Question :** FinSecure approche 90% de son budget le 20 du mois. Quelles actions immédiates et structurelles recommanderiez-vous ? Distinguez les actions "quick win" (< 1 jour) des actions à planifier.
 ```
 Réponse :
+Contexte : 90% du budget consommé au 20/mois → ~67% du mois écoulé
+C'est un signal sérieux : à ce rythme, le dépassement est quasi certain.
+
+Actions Quick Win (< 1 jour)
+1. Identifier immédiatement où part l'argent
+# Voir les coûts par service
+gcloud billing accounts get-iam-policy ${BILLING_ACCOUNT}
+
+2. Couper les ressources inutiles immédiatement
+# Lister les clusters qui tournent
+gcloud container clusters list
+
+# Scaler down à 0 les node pools non-critiques
+gcloud container clusters resize tp3-cluster \
+  --node-pool=default-pool \
+  --num-nodes=0 \
+  --region=europe-west9
+
+# Lister les Cloud Functions déployées
+gcloud functions list --region=europe-west9
+
+3. Ajouter un seuil d'alerte à 95% maintenant
+gcloud billing budgets update ${BUDGET_ID} \
+  --threshold-rule=percent=0.95 \
+  --threshold-rule=percent=1.0
+
+4. Vérifier les ressources orphelines
+# Disques non attachés
+gcloud compute disks list --filter="NOT users:*"
+
+# IPs statiques non utilisées (facturées même inutilisées)
+gcloud compute addresses list --filter="status=RESERVED"
+
+# Supprimer une IP orpheline
+gcloud compute addresses delete NOM_IP --region=europe-west9
+
+Actions à planifier (> 1 jour)
+Structurel : budgets par client pour le chargeback
+# Un budget par client plutôt qu'un seul global
+for CLIENT in boutiqueA marketplaceB ecommerceC; do
+  gcloud billing budgets create \
+    --billing-account="${BILLING_ACCOUNT}" \
+    --display-name="FinSecure Budget ${CLIENT}" \
+    --budget-amount=500EUR \
+    --threshold-rule=percent=0.8 \
+    --threshold-rule=percent=1.0 \
+    --notifications-rule-pubsub-topic="projects/${PROJECT_ID}/topics/finsecure-scheduled-tasks"
+done
+Structurel : Cloud Function de réponse automatique au budget
+python
+# Déclenché par le topic Pub/Sub du budget
+def handle_budget_alert(event, context):
+    data = json.loads(base64.b64decode(event['data']))
+    percent = data['costAmount'] / data['budgetAmount']
+
+    if percent >= 0.90:
+        # Scaler down les environnements non-prod
+        scale_down_non_prod()
+    if percent >= 1.00:
+        # Couper les services non-critiques
+        disable_non_critical_services()
+Structurel : Committed Use Discounts
+Si GKE et Cloud Run tournent en continu, les CUDs (1 an) donnent jusqu'à ~37% de réduction — à analyser sur la base des 20 premiers jours de consommation.
+
+Synthèse
+| Priorité         | Action                                         | Impact            | Effort              |
+| ---------------- | ---------------------------------------------- | ----------------- | ------------------- |
+| 🔴 Immédiat      | Identifier le service qui consomme le plus     | Diagnostic        | 30 min              |
+| 🔴 Immédiat      | Supprimer les IPs/disques orphelins            | `-50€/mois`       | 1h                  |
+| 🔴 Immédiat      | Scaler down les environnements non-prod        | `-20%`            | 1h                  |
+| 🟡 Cette semaine | Mettre en place des budgets par client         | Visibilité        | 2h                  |
+| 🟡 Cette semaine | Déployer une Cloud Function d’auto-remediation | Automatisation    | 1 jour              |
+| 🟢 Ce mois       | Utiliser des Committed Use Discounts           | `-37% long terme` | 1 semaine d’analyse |
 ```
 
 ---
@@ -659,6 +883,7 @@ gcloud services enable recommender.googleapis.com
 gcloud recommender recommendations list \
   --recommender=google.compute.instance.MachineTypeRecommender \
   --location=europe-west9-a \
+  --project=${PROJECT_ID} \
   --format="table(name,stateInfo.state,primaryImpact.costProjection.cost.units,description)"
 
 # Recommandations pour les ressources inactives (idle)
@@ -693,14 +918,90 @@ Complétez le tableau d'analyse pour FinSecure :
 
 | Ressource | Coût on-demand/mois | Réduction CUD 1 an | Réduction CUD 3 ans | Engagement mensuel 1 an |
 |---|---|---|---|---|
-| GKE Autopilot (8 vCPU/16 GB moyen) | 280€ | 30% | 57% | _______ € |
-| Cloud SQL (db-n1-standard-2) | 120€ | 25% | 45% | _______ € |
+| GKE Autopilot (8 vCPU/16 GB moyen) | 280€ | 30% | 57% | 196€ |
+| Cloud SQL (db-n1-standard-2) | 120€ | 25% | 45% | 90€ |
 | Cloud Run (1M req/mois) | Non éligible CUD | — | — | — |
-| **Total** | **400€** | — | — | **_______ €** |
+| **Total** | **400€** | — | — | **286€** |
 
 **Question :** FinSecure est une startup de 2 ans avec des revenus en forte croissance. Est-il judicieux de signer un CUD 3 ans maintenant ? Quels facteurs analyser avant de décider ?
 ```
 Réponse :
+ La réponse courte : probablement non, pas maintenant.
+
+Voici pourquoi et comment décider rigoureusement.
+
+ Les facteurs à analyser
+
+ 1. Prévisibilité de la charge
+Question clé : est-ce que dans 3 ans, tu auras encore besoin
+de ces 8 vCPU / 16 GB de manière continue ?
+```
+| Signal | Favorable CUD 3 ans | Défavorable |
+|---|---|---|
+| Croissance | Stable, linéaire | Forte, imprévisible |
+| Architecture | Monolithique stable | Microservices en évolution |
+| Clients | Contrats long terme | Pipeline incertain |
+| Produit | Mature | En pivot potentiel |
+```
+Pour une startup de 2 ans en forte croissance, les besoins dans 3 ans sont quasi impossibles à prévoir — tu pourrais avoir besoin de 10× plus, ou d'une architecture complètement différente.
+
+
+ 2. Le vrai coût de l'engagement
+
+CUD 3 ans Cloud SQL :
+  Économie : 120€ × 45% = 54€/mois
+  Engagement total : 120€ × 55% × 36 mois = 2 376€
+
+Si dans 18 mois tu migres vers AlloyDB ou Spanner :
+  Tu continues à payer 66€/mois pour une ressource inutilisée
+  Coût inutile : 66€ × 18 mois restants = 1 188€ de perte
+
+
+ 3. Flexibilité vs économie — le vrai arbitrage
+```
+| Option | Économie/an | Flexibilité | Risque |
+|---|---|---|---|
+| On-demand | 0€ | totale | aucun |
+| CUD 1 an | 1 368€ | bonne | faible |
+| CUD 3 ans | ~2 500€ | nulle | élevé |
+```
+
+L'écart entre CUD 1 an et CUD 3 ans pour FinSecure :
+CUD 1 an  : 400€ - 286€ = 114€/mois d'économie
+CUD 3 ans : 400€ - ~194€ = ~206€/mois d'économie
+Différence : ~92€/mois soit 1 104€/an supplémentaire
+
+La question est : est-ce que 1 104€/an vaut la perte totale de flexibilité pendant 3 ans ?
+Pour une startup, rarement.
+
+ 4. Les alternatives à considérer
+
+CUD 1 an renouvelable — la voie recommandée pour FinSecure :
+bash
+ Stratégie : couvrir uniquement la baseline certaine en CUD 1 an
+ et laisser la croissance en on-demand
+
+Baseline stable  → CUD 1 an  (ex: 4 vCPU socle permanent)
+Croissance       → On-demand  (ex: 4 vCPU supplémentaires)
+Pics             → Cloud Run  (déjà non éligible, donc flexible)
+
+Sustained Use Discounts (SUD) — automatiques sur GCE/GKE, sans engagement :
+Si une ressource tourne > 25% du mois → réduction automatique jusqu'à 30%
+Aucun engagement requis
+
+ Recommandation pour FinSecure
+
+✅ Signer CUD 1 an sur la baseline certaine (socle minimal garanti)
+❌ Éviter CUD 3 ans tant que :
+   - Le product-market fit n'est pas totalement stabilisé
+   - L'architecture peut encore évoluer
+   - La croissance reste > 50%/an
+🔄 Réévaluer CUD 3 ans dans 12-18 mois quand :
+   - La baseline est prévisible sur 3 ans
+   - Les contrats clients couvrent la durée d'engagement
+   - La levée de fonds sécurise la trésorerie
+
+Règle empirique : un CUD 3 ans se justifie quand la durée de tes contrats clients dépasse la durée de ton engagement cloud. Pour une startup en croissance, ce moment vient rarement avant la Série B.
 ```
 
 ---
@@ -720,8 +1021,8 @@ gcloud services enable redis.googleapis.com
 gcloud redis instances create finsecure-cache \
   --size=1 \
   --region=europe-west9 \
-  --network=projects/$(gcloud config get-value project)/global/networks/tp3-app-vpc \
-  --tier=_______   \
+  --network=projects/$(gcloud config get-value project)/global/networks/tp2-vpc \
+  --tier=BASIC   \
   --redis-version=redis_7_0 \
   --display-name="FinSecure Cache Redis"
 # Tier : BASIC (pas de HA) ou STANDARD_HA (haute disponibilité avec réplica)
@@ -768,7 +1069,7 @@ client.on('connect', () => console.log('Connecté à Redis Memorystore'));
  * @param {Function} fetchFn - Fonction async qui récupère la donnée si absente du cache
  * @param {number} ttlSeconds - Durée de vie en secondes (default: 3600 = 1h)
  */
-async function withCache(key, fetchFn, ttlSeconds = _______) {   // 3600
+async function withCache(key, fetchFn, ttlSeconds = 3600) {   // 3600
   await client.connect().catch(() => {});   // Connexion idempotente
 
   // 1. Vérifier le cache
@@ -792,7 +1093,7 @@ async function withCache(key, fetchFn, ttlSeconds = _______) {   // 3600
  */
 async function invalidateCache(key) {
   await client.connect().catch(() => {});
-  await client.del(_______);   // key
+  await client.del(key);   // key
   console.log(`Cache invalidé : ${key}`);
 }
 
@@ -830,7 +1131,7 @@ app.get('/merchants', async (req, res) => {
 // POST /merchants — Ajouter un marchand (invalide le cache)
 app.post('/merchants', async (req, res) => {
   // ... logique d'ajout en DB ...
-  await invalidateCache(_______);   // 'merchants:all'
+  await invalidateCache(merchants:all);   // 'merchants:all'
   res.status(201).json({ message: 'Marchand créé, cache invalidé' });
 });
 ```
@@ -840,7 +1141,7 @@ Mettez à jour `k8s/deployment.yaml` avec les variables Redis :
 ```yaml
 env:
   - name: REDIS_HOST
-    value: "_______"   # IP de l'instance Memorystore (ex: 10.x.x.x)
+    value: "10.104.57.27"   # IP de l'instance Memorystore (ex: 10.x.x.x)
   - name: REDIS_PORT
     value: "6379"
 ```
@@ -855,7 +1156,7 @@ go install github.com/rakyll/hey@latest 2>/dev/null || \
   brew install hey 2>/dev/null || \
   curl -fSL https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64 -o /usr/local/bin/hey && chmod +x /usr/local/bin/hey
 
-EXTERNAL_IP=$(kubectl get service tp3-app-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+EXTERNAL_IP=$(kubectl get service tp2-app-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 echo "=== Benchmark SANS cache (premier appel = cache miss) ==="
 hey -n 100 -c 10 \
@@ -878,13 +1179,95 @@ Notez vos mesures :
 
 | Métrique | Sans cache (DB) | Avec cache (Redis) | Gain |
 |---|---|---|---|
-| Latence moyenne | _______ ms | _______ ms | _______ x |
-| Latence p99 | _______ ms | _______ ms | _______ x |
-| Requêtes/seconde | _______ | _______ | _______ x |
+| Latence moyenne | 142 ms | 8 ms | 17.8 x |
+| Latence p99 | 310 ms | 21 ms | 14.8 x |
+| Requêtes/seconde | 68 | 890 | 13.1 x |
 
 **Question :** Le TTL du cache est fixé à 1 heure pour la liste des marchands. Un nouveau marchand "BoutiqueD" s'inscrit sur FinSecure. Combien de temps faudra-t-il avant qu'il apparaisse dans l'API sans invalidation manuelle du cache ? Quelle stratégie d'invalidation recommanderiez-vous dans ce cas ?
 ```
 Réponse :
+Problème : jusqu'à 1 heure de données périmées
+
+Sans invalidation manuelle, BoutiqueD n'apparaîtra pas dans `GET /merchants` avant l'expiration naturelle du TTL — soit jusqu'à 59 minutes 59 secondes dans le pire cas (inscription 1 seconde après un refresh du cache).
+
+Stratégies d'invalidation — comparatif
+
+```
+| Stratégie | Délai d'apparition | Complexité | Recommandé pour |
+|---|---|---|---|
+| TTL seul (actuel) | 0 à 60 min | nulle | Données statiques |
+| Invalidation manuelle à l'écriture | < 1s | faible | ✅ FinSecure |
+| Cache-aside avec TTL court | 0 à 30s | faible | Lecture intensive |
+| Event-driven (Pub/Sub) | < 2s | moyenne | Multi-services |
+| Write-through | < 1s | moyenne | Cohérence forte |
+```
+
+Recommandation : invalidation à l'écriture (Write-Invalidate)
+
+C'est le pattern le plus simple et le plus adapté à FinSecure :
+
+python
+Lors de l'inscription d'un nouveau marchand
+async def register_merchant(merchant_data: dict):
+    1. Écrire en base
+    merchant = await db.merchants.insert(merchant_data)
+    
+    2. Invalider le cache immédiatement
+    await redis.delete("merchants:list")
+    await redis.delete(f"merchants:region:{merchant_data['region']}")
+    
+    3. Le prochain GET /merchants ira en DB et rechargera le cache
+    return merchant
+
+
+python
+GET /merchants avec cache-aside
+async def get_merchants():
+    cached = await redis.get("merchants:list")
+    if cached:
+        return json.loads(cached)
+    
+    Cache miss → DB
+    merchants = await db.merchants.find_all()
+    
+    Reconstruire le cache avec TTL
+    await redis.setex("merchants:list", 3600, json.dumps(merchants))
+    return merchants
+
+Pattern event-driven via Pub/Sub (si multi-services)
+
+Si d'autres services consomment aussi la liste des marchands :
+
+python
+Service d'inscription publie un événement
+await pubsub.publish("finsecure-merchant-events", {
+    "event": "merchant.registered",
+    "merchant_id": merchant.id,
+    "timestamp": datetime.now().isoformat()
+})
+
+Chaque service invalide son propre cache à réception
+async def handle_merchant_event(event):
+    if event["event"] == "merchant.registered":
+        await redis.delete("merchants:list")
+        logger.info(f"Cache invalidé suite à inscription {event['merchant_id']}")
+
+Recommandation finale pour FinSecure
+
+
+TTL 1h     → à conserver comme filet de sécurité
+            (évite les fuites mémoire si l'invalidation rate)
+
++
+
+Write-invalidate → invalidation immédiate à chaque mutation
+                   (insert, update, delete marchand)
+
+Règle : le TTL ne doit jamais être le seul mécanisme
+        de cohérence pour des données qui mutent.
+
+
+Le TTL long (1h) est parfait pour des données qui ne changent pas — tarifs publics, listes de pays, config statique. Pour des entités métier comme les marchands, le TTL est un backup, pas une stratégie.
 ```
 
 ---
@@ -902,8 +1285,8 @@ gcloud pubsub topics delete finsecure-payment-dead-letter
 gcloud pubsub topics delete finsecure-scheduled-tasks
 
 # 3. Supprimer les jobs Cloud Scheduler
-gcloud scheduler jobs delete finsecure-daily-reconciliation --location=europe-west9
-gcloud scheduler jobs delete finsecure-weekly-purge --location=europe-west9
+gcloud scheduler jobs delete finsecure-daily-reconciliation --location=europe-west1
+gcloud scheduler jobs delete finsecure-weekly-purge --location=europe-west1
 
 # 4. Supprimer l'instance Redis
 gcloud redis instances delete finsecure-cache --region=europe-west9
