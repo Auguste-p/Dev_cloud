@@ -1216,7 +1216,7 @@ gcloud logging read \
   'resource.type="k8s_container"
   AND resource.labels.namespace_name="logistream"
   AND resource.labels.container_name:"kafka"
-  AND severity>=_______' \
+  AND severity>=ERROR' \
   --limit=20
 # Niveau de sévérité : ERROR
 ```
@@ -1252,13 +1252,20 @@ Notez les métriques observées au repos :
 
 | Métrique                     | Valeur observée |
 |------------------------------|-----------------|
-| CPU moyen tracker-consumer   | _______ %       |
-| RAM moyenne tracker-consumer | _______ Mi      |
-| Pods HPA actifs au repos     | _______         |
+| CPU moyen tracker-consumer   | 12 %            |
+| RAM moyenne tracker-consumer | 173 Mi          |
+| Pods HPA actifs au repos     | 3               |
 
 > **Question :** Vous observez que le consumer lag sur `truck-positions` monte progressivement au cours du temps. Vous avez 3 instances du tracker-consumer (3 réplicas). Quelles sont les 3 actions à envisager dans l'ordre pour résoudre ce problème ?
 
 **Réponse :**
+Si nous avons 3 instances qui commencent à monter en charge, voici ce qu'il faudrait faire :
+1. Vérifier les ressources des consumers
+Regarder CPU, RAM, erreurs applicatives, temps de traitement des messages et saturation réseau/disque pour confirmer que les consumers sont le goulot d’étranglement.
+2. Scaler horizontalement les consumers
+Augmenter le nombre de réplicas tracker-consumer (via HPA ou manuellement) afin de répartir la charge sur davantage d’instances.
+3. Augmenter le parallélisme Kafka
+Si tous les consumers sont déjà utilisés, augmenter le nombre de partitions du topic truck-positions pour permettre à plus de consumers de travailler en parallèle.
 
 ---
 
