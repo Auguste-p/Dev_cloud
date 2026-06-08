@@ -41,8 +41,8 @@
 # Namespace dédié FraudGuard
 kubectl create namespace fraudguard
 
-# Déployer le cluster Kafka avec Strimzi (si pas encore fait)
-kubectl apply -f https://strimzi.io/install/latest?namespace=kafka -n kafka
+# Déployer le cluster Kafka avec Strimzi (si pas encore fait) besoin de guillemets avec zsh sur mac
+kubectl apply -f "https://strimzi.io/install/latest?namespace=kafka" -n kafka
 kubectl wait --for=condition=Ready pod -l name=strimzi-cluster-operator -n kafka --timeout=120s
 ```
 
