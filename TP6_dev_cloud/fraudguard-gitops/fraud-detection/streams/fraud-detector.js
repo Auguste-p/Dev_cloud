@@ -19,7 +19,7 @@ async function analyzeTransaction(transaction) {
       if (alerts.length > 0) {
         span.setAttribute('fraud.alert_severity', alerts[0].severity);
         // Marquer le span comme "intéressant" pour le sampling Tempo
-        span.setAttribute('sampling.priority', _______); // 1 (force la capture)
+        span.setAttribute('sampling.priority', 1); // 1 (force la capture)
       }
       span.setStatus({ code: 1 }); // OK
       return alerts;
