@@ -49,6 +49,8 @@ Le pipeline de détection de fraude FraudGuard est en production depuis trois mo
 - ✅ Rapport Chaos Engineering (Markdown) avec 3 expériences exécutées et analysées
 - ✅ `README.md` décrivant l'architecture GitOps + Multi-cloud cible
 
+DISCLAIMER - TP non testé sur GCP par manque de crédit, donc captures écran de la console impossibles
+
 ---
 
 # Partie 1 — GitOps avec ArgoCD : Mettre fin aux kubectl manuels
@@ -147,7 +149,7 @@ Initialisez le dépôt localement :
 ```bash
 mkdir -p fraudguard-gitops && cd fraudguard-gitops
 git init
-git remote add origin https://github.com/<VOTRE-ORG>/fraudguard-gitops.git
+git remote add origin https://github.com/Auguste-p/Dev_cloud.git
 ```
 
 ---
@@ -169,10 +171,10 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/<VOTRE-ORG>/fraudguard-gitops.git
+    repoURL: https://github.com/Auguste-p/Dev_cloud.git
     targetRevision: main
     # Chemin contenant TOUTES les Applications enfants
-    path: _______ # apps
+    path: apps # apps
   directory:
     recurse: true # Découvrir les Applications dans tous les sous-dossiers
   destination:
@@ -180,8 +182,8 @@ spec:
     namespace: argocd
   syncPolicy:
     automated:
-      prune: _______ # true (supprimer les ressources retirées du Git)
-      selfHeal: _______ # true (corriger automatiquement les drifts)
+      prune: true # true (supprimer les ressources retirées du Git)
+      selfHeal: true # true (corriger automatiquement les drifts)
   syncOptions:
     - CreateNamespace=true
 ```
@@ -197,11 +199,11 @@ metadata:
   annotations:
     # Sync Wave : ordre de déploiement (négatif = avant, positif = après)
     # Infrastructure = wave 0, Plateforme = wave 1, Business = wave 2
-    argocd.argoproj.io/sync-wave: "_______" # "2"
+    argocd.argoproj.io/sync-wave: "2" # "2"
 spec:
   project: default
   source:
-    repoURL: https://github.com/<VOTRE-ORG>/fraudguard-gitops.git
+    repoURL: https://github.com/Auguste-p/Dev_cloud.git
     targetRevision: main
     path: manifests/business/fraud-detector
   destination:
@@ -263,6 +265,7 @@ argocd app history fraud-detector
 ```
 
 Complétez le tableau d'observation :
+Pas fait car pas lancé sur GCP (cf disclaimer)
 
 | Action | État avant | État après Self-Heal | Détecté ? |
 |--------|------------|---------------------|-----------|
@@ -304,12 +307,12 @@ spec:
       # Service qui pointe vers la nouvelle version (Canary)
       canaryService: fraud-detector-canary
       steps:
-        - setWeight: _______ # 20 (20% du trafic vers Canary)
+        - setWeight: 20 # 20 (20% du trafic vers Canary)
         - pause: { duration: 2m } # Observer pendant 2 minutes
         - analysis:
             templates:
               - templateName: fraud-detector-success-rate
-        - setWeight: _______ # 40
+        - setWeight: 40 # 40
         - pause: { duration: 2m }
         - analysis:
             templates:
@@ -359,7 +362,7 @@ spec:
       # Seuil : taux de succès doit rester > 99%
       successCondition: result[0] >= 0.99
       # Si la condition échoue 3 fois consécutivement → rollback automatique
-      failureLimit: _______ # 3
+      failureLimit: 3 # 3
       provider:
         prometheus:
           address: http://monitoring-kube-prometheus-prometheus.monitoring:9090
@@ -394,6 +397,31 @@ kubectl argo rollouts get rollout fraud-detector -n fraudguard --watch
 > **Question :** Quelle est la différence fondamentale entre la stratégie Canary d'Argo Rollouts et la stratégie Blue-Green ? Dans quel cas FraudGuard devrait-elle préférer Blue-Green ?
 >
 > **Réponse :**
+> 
+> **Différence fondamentale**
+> | Critère | Canary | Blue-Green |
+> |---|---|---|
+> | **Principe** | Montée en charge **progressive** (ex: 20% → 40% → 100%) | Deux environnements **complets** > en parallèle (v1 actif, v2 en attente) |
+> | **Trafic** | Splitté proportionnellement entre v1 et v2 | Basculement **instantané et total** via switch > du Load Balancer |
+> | **Ressources** | Consommation progressive (peu de pods v2 au début) | Double consommation pendant toute la > durée du test |
+> | **Rollback** | Progressif, nécessite quelques minutes | **Immédiat** (re-bascule du LB vers > l'environnement Blue) |
+> | **Validation** | En conditions réelles sur un sous-ensemble d'utilisateurs | En environnement isolé, puis > bascule tout-ou-rien |
+> 
+> ---
+> 
+> ### Quand FraudGuard devrait-elle préférer Blue-Green ?
+> 
+> FraudGuard devrait privilégier **Blue-Green** dans ces situations :
+> 
+> 1. **Changement de schéma Kafka ou de contrat de message** : si la v2 est incompatible avec la v1 (format > d'event différent), exposer 20% du trafic à la v2 en Canary risque de corrompre des messages en transit.
+> 
+> 2. **Release critique avec SLA contractuel** : comme l'incident #INC-051, si une régression sur les alertes > CRITICAL est inacceptable même pour 1% des transactions, le Blue-Green permet de valider complètement la v2 > avant toute exposition.
+> 
+> 3. **Migration de base de données** : si la v2 nécessite un schéma Firestore différent, impossible de faire > cohabiter v1 et v2 simultanément sur le même store.
+> 
+> 4. **Rollback ultra-rapide requis** : le Blue-Green garantit un retour à la v1 en **quelques secondes** > (re-bascule LB), contre plusieurs minutes en Canary.
+> 
+> En résumé : **Canary** est idéal pour valider progressivement une évolution fonctionnelle sans risque > majeur. **Blue-Green** est préférable quand la cohabitation v1/v2 est techniquement impossible ou quand le > coût d'une régression partielle est inacceptable (comme c'est le cas pour FraudGuard avec ses pénalités > contractuelles de 125 000€).
 
 ---
 
@@ -469,7 +497,7 @@ spec:
         valueFiles:
           - $values/manifests/infrastructure/monitoring/loki-values.yaml
     # Source 2 : le dépôt GitOps qui contient nos values (nommé "values")
-    - repoURL: https://github.com/<VOTRE-ORG>/fraudguard-gitops.git
+    - repoURL: https://github.com/Auguste-p/Dev_cloud.git
       targetRevision: main
       ref: values
   destination:
@@ -479,9 +507,6 @@ spec:
     automated: { prune: true, selfHeal: true }
     syncOptions:
       - CreateNamespace=true
-```
-
-```yaml
 ---
 # Promtail (agent de collecte) déployé séparément
 apiVersion: argoproj.io/v1alpha1
@@ -500,7 +525,7 @@ spec:
       helm:
         valueFiles:
           - $values/manifests/infrastructure/monitoring/promtail-values.yaml
-    - repoURL: https://github.com/<VOTRE-ORG>/fraudguard-gitops.git
+    - repoURL: https://github.com/Auguste-p/Dev_cloud.git
       targetRevision: main
       ref: values
   destination:
@@ -524,7 +549,7 @@ Dans **Grafana → Explore → Loki**, testez ces requêtes :
 
 ```logql
 # 1. Tous les logs du fraud-detector
-{namespace="fraudguard", app="_______"} # fraud-detector
+{namespace="fraudguard", app="fraud-detector"} # fraud-detector
 
 # 2. Filtrer les alertes CRITICAL uniquement
 {namespace="fraudguard", app="fraud-detector"} |= "CRITICAL"
@@ -553,8 +578,51 @@ quantile_over_time(0.99,
 > **Question :** Le cours mentionne d'éviter les labels à haute cardinalité (IP utilisateur, Request ID) dans l'index Loki. Pourquoi est-ce critique pour la performance ? Quelle est l'alternative pour pouvoir tout de même rechercher par Request ID ?
 >
 > **Réponse :**
-
----
+> **Labels haute cardinalité dans Loki**
+> 
+> **Comment fonctionne Loki**
+> 
+> Loki repose sur deux mécanismes distincts :
+> 
+> - Les **labels** sont indexés. Loki les utilise pour localiser rapidement les flux de logs.
+> - Le **contenu du log** est stocké brut et n'est parcouru qu'après que les labels ont permis de cibler un sous-ensemble de données.
+> 
+> ---
+> 
+> ### Pourquoi la haute cardinalité pose problème
+> 
+> Chaque valeur unique d'un label génère une entrée distincte dans l'index. Pour un label comme `severity`, il n'existe que quelques valeurs possibles (info, warning, error), donc l'index reste petit.
+> 
+> Pour un label comme `request_id`, chaque requête produit une valeur différente. Sur FraudGuard avec 5 millions de transactions par jour, cela signifie 5 millions d'entrées dans l'index rien que pour ce label. Cela provoque une saturation mémoire des ingesters, un ralentissement général des requêtes et une augmentation significative des coûts de stockage.
+> 
+> ---
+> 
+> ### L'alternative recommandée
+> 
+> Il ne faut pas supprimer l'information, mais la déplacer dans le contenu du log plutôt que dans les labels.
+> 
+> ```json
+> {
+>   "level": "error",
+>   "app": "fraud-detector",
+>   "request_id": "abc-123",
+>   "message": "Transaction refusée"
+> }
+> ```
+> 
+> Pour rechercher par `request_id`, on utilise LogQL en combinant un filtre sur les labels (rapide) puis un > filtre sur le contenu (ciblé) :
+> 
+> ```logql
+> {app="fraud-detector"} | json | request_id="abc-123"
+> ```
+> 
+> Loki commence par restreindre les données via le label `app`, puis parcourt uniquement ce sous-ensemble pour trouver le `request_id` souhaité. La performance reste acceptable car le périmètre de recherche est déjà réduit.
+> 
+> ---
+> 
+> **Règle à retenir**
+> 
+> Un label doit avoir un nombre de valeurs possibles faible et stable. Dès qu'une valeur est unique ou quasi-unique par événement, elle appartient au contenu du log, pas à l'index.
 
 ## 2.3 — Déployer Tempo pour le tracing distribué
 
@@ -624,7 +692,7 @@ const sdk = new NodeSDK({
   }),
   traceExporter: new OTLPTraceExporter({
     // Envoyer les traces au Tempo via OTLP gRPC
-    url: 'http://tempo.monitoring.svc.cluster.local:_______', // 4317
+    url: 'http://tempo.monitoring.svc.cluster.local:4317', // 4317
   }),
   instrumentations: [getNodeAutoInstrumentations({
     // Désactiver l'auto-instrumentation FS (trop bruyant)
@@ -690,6 +758,35 @@ Dans **Grafana → Explore → Tempo → Search** :
 > **Question :** Dans une trace distribuée, vous voyez que le span `kafka.publish.fraud-alerts` prend 850ms (alors que le span `analyze_transaction` ne prend que 12ms). Comment investigueriez-vous cette anomalie ? Quel outil de Grafana permet de corréler ce span avec les logs Loki du broker Kafka au même instant ?
 >
 > **Réponse :**
+> 
+> **Ce que ça indique**
+> 
+> Le traitement métier (`analyze_transaction`) est rapide à 12ms. Le problème est dans la publication vers Kafka, pas dans la logique de détection de fraude.
+> 
+> Causes probables à investiguer :
+> 
+> - **Backpressure** : le topic est plein ou le broker est saturé
+> - **Réseau** : latence entre le service et le broker
+> - **Configuration producteur** : batch size ou linger.ms trop élevés
+> - **Réplication** : attente d'acknowledgement des replicas (acks=all)
+> 
+> ---
+> 
+> **Démarche d'investigation**
+> 
+> 1. Regarder les **attributs du span** : vérifier les tags `messaging.kafka.partition`, `error`, le nombre de retry
+> 2. Remonter à la **trace parente** pour voir si d'autres services sont impactés au même moment
+> 3. Comparer avec des traces similaires antérieures pour savoir si c'est ponctuel ou dégradé
+> 
+> ---
+> 
+> **Corrélation avec Loki via Grafana**
+> 
+> L'outil est **Grafana Explore** avec la fonctionnalité **TraceQL + dérivation de logs**.
+> 
+> Depuis Tempo, en cliquant sur le span `kafka.publish.fraud-alerts`, Grafana permet de **dériver une requête Loki** automatiquement en utilisant le `traceID` et l'horodatage exact du span. Cela ouvre les logs Kafka du broker au même instant sans recherche manuelle.
+> 
+> La corrélation repose sur le champ `traceID` présent à la fois dans la trace Tempo et dans les logs Loki, à condition que le broker Kafka soit configuré pour logger ce champ.
 
 ---
 
@@ -699,12 +796,12 @@ Dans **Grafana → Explore → Tempo → Search** :
 
 Complétez le tableau des SLO FraudGuard :
 
-| Service | SLI (indicateur mesurable) | SLO (cible interne) | SLA (contrat client) | Error Budget mensuel |
-|---------|----------------------------|----------------------|----------------------|---------------------|
+| Service | SLI | SLO (cible interne) | SLA (contrat client) | Error Budget mensuel |
+|---|---|---|---|---|
 | tx-producer | Taux de transactions publiées avec succès dans Kafka | 99.95% | 99.9% | 21,6 min / mois |
-| fraud-detector | Latence P99 de détection (Kafka consume → alert publish) | < _______ ms | < _______ ms | _______ min |
-| alert-handler | Taux d'alertes CRITICAL traitées en < 5s | _______ % | _______ % | _______ |
-| Système global | Disponibilité E2E (depuis l'IngressGateway) | 99.95% | 99.9% | _______ min |
+| fraud-detector | Latence P99 de détection (Kafka consume → alert publish) | < 200 ms | < 500 ms | 21,6 min / mois |
+| alert-handler | Taux d'alertes CRITICAL traitées en < 5s | 99.9% | 99.5% | 21,6 min / mois |
+| Système global | Disponibilité E2E (depuis l'IngressGateway) | 99.95% | 99.9% | 21,6 min / mois |
 
 Créez la Recording Rule Prometheus pour calculer l'Error Budget en temps réel. Ajoutez à `manifests/infrastructure/monitoring/recording-rules.yaml` :
 
@@ -742,7 +839,7 @@ spec:
                 fraudguard:detector_success_rate:5m[30d]
               ))
               /
-              (1 - _______) # SLO du fraud-detector (ex: 0.995)
+              (1 - 0.995) # SLO du fraud-detector (ex: 0.995)
             )
 
         # Alerte : Error Budget < 20% restant
@@ -759,7 +856,14 @@ spec:
 
 > **Question :** L'Error Budget restant est tombé à 5% en milieu de mois. Selon les principes SRE, quelle décision opérationnelle doit prendre l'équipe ? Quel impact pour les Product Managers ?
 >
-> **Réponse :**
+> **Réponse :** 
+> **Ce que l'équipe doit faire**
+> Quand le budget est quasi-épuisé à mi-mois, les principes SRE imposent de **geler les déploiements en production**. Aucune nouvelle fonctionnalité ne peut être mise en ligne jusqu'à la fin du mois ou jusqu'à ce que la stabilité soit restaurée.
+> 
+> L'équipe se concentre uniquement sur la fiabilité : corriger les causes de consommation du budget, renforcer les tests, améliorer la résilience.
+> 
+> **Impact pour les Product Managers**
+> Les nouvelles features sont bloquées. Les PMs doivent reporter leurs livraisons prévues. C'est le principe fondamental du compromis SRE : le budget d'erreur est une ressource partagée entre innovation et stabilité. Quand il est épuisé, la fiabilité prend le dessus sur la vélocité.
 
 ---
 
@@ -864,7 +968,7 @@ spec:
   type: PodChaos # Type de l'expérience encapsulée
   podChaos:
     # Type d'action : "pod-kill" supprime le pod, "pod-failure" le rend indisponible
-    action: _______ # pod-kill
+    action: pod-kill # pod-kill
     mode: one # Cibler UN seul pod (blast radius limité)
     selector:
       namespaces:
@@ -895,6 +999,7 @@ kubectl get pods -n fraudguard -l app=fraud-detector -w
 ```
 
 Complétez le tableau pendant et après l'expérience (5 minutes) :
+Pas fait car pas sur GCP
 
 | Métrique | Baseline | Pendant Chaos | Après Chaos (récupération) | Verdict |
 |----------|----------|---------------|----------------------------|---------|
@@ -920,7 +1025,7 @@ metadata:
   name: latency-kafka-detector
   namespace: fraudguard
 spec:
-  action: _______ # delay
+  action: delay # delay
   mode: all # Sur TOUS les pods fraud-detector
   selector:
     namespaces:
@@ -929,7 +1034,7 @@ spec:
       app: fraud-detector
   delay:
     # Ajouter 200ms ± 50ms de latence sur tout le trafic sortant
-    latency: '_______' # '200ms'
+    latency: '200ms' # '200ms'
     correlation: '50'
     jitter: '50ms'
   # Cibler UNIQUEMENT le trafic vers Kafka (ne pas casser le trafic vers Prometheus)
@@ -980,7 +1085,7 @@ spec:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: _______ # 70 (scale-up dès 70% CPU)
+          averageUtilization: 70 # 70 (scale-up dès 70% CPU)
 ```
 
 Puis l'expérience de stress :
@@ -1018,13 +1123,14 @@ kubectl get hpa fraud-detector-hpa -n fraudguard -w
 ## 3.5 — Rapport Chaos Engineering
 
 Rédigez `CHAOS_REPORT.md` dans le dépôt `fraudguard-gitops/` avec ce template :
+Valeurs fictives car non exectué avec GCP
 
 ```markdown
 # Rapport Chaos Engineering FraudGuard — Sprint 2026-Q2
 
 ## Synthèse exécutive
 - Nombre d'expériences exécutées : 3
-- Hypothèses validées : ___ / 3
+- Hypothèses validées : 3 / 3
 - Régressions détectées : ___
 - Recommandations critiques : ___
 
@@ -1052,6 +1158,11 @@ Rédigez `CHAOS_REPORT.md` dans le dépôt `fraudguard-gitops/` avec ce template
 > **Question :** Pourquoi est-il dangereux d'exécuter une expérience Chaos directement en production sans `mode: one` ni `duration` limitée ? Donnez 2 sécurités supplémentaires à mettre en place avant un Game Day en production.
 >
 > **Réponse :**
+> Sans `mode: one` ni `duration` limitée, le chaos peut se propager à tous les pods simultanément et ne jamais s'arrêter automatiquement, provoquant une panne réelle incontrôlée en production.
+> 
+> **1. Définir un rollback automatique** : configurer un webhook ou une alerte Grafana qui stoppe l'expérience si un SLO est violé au-delà d'un seuil critique.
+> 
+> **2. Avoir un "abort button" humain** : un ingénieur dédié surveille en temps réel et peut supprimer la ressource Chaos Mesh immédiatement (`kubectl delete chaosexperiment`), distinct de l'équipe qui pilote l'expérience.
 
 ---
 
@@ -1065,14 +1176,14 @@ Rédigez `CHAOS_REPORT.md` dans le dépôt `fraudguard-gitops/` avec ce template
 
 Complétez le diagramme suivant en associant chaque service à son équivalent AWS :
 
-| Service GCP (Primaire) | Équivalent AWS (DR) | Mécanisme de synchronisation |
-|------------------------|---------------------|------------------------------|
-| GKE (cluster fraudguard) | _______ | Manifestes identiques via GitOps |
-| Cloud Storage (modèles ML) | _______ | Sync via Storage Transfer Service |
-| Firestore (alertes) | _______ | CDC via Change Data Capture |
-| Artifact Registry (images) | _______ | Mirror via Skopeo cron job |
-| Cloud DNS | _______ | Failover record (TTL = 60s) |
-| Cloud Load Balancing | _______ | Global Accelerator avec health check |
+| Service GCP (Primaire) | Équivalent AWS (DR) |
+|------------------------|---------------------|
+| GKE (cluster fraudguard) | **EKS** |
+| Cloud Storage (modèles ML) | **S3** |
+| Firestore (alertes) | **DynamoDB** |
+| Artifact Registry (images) | **ECR** |
+| Cloud DNS | **Route 53** |
+| Cloud Load Balancing | **ALB + Global Accelerator** |
 
 ---
 
@@ -1114,7 +1225,7 @@ resource "google_container_cluster" "fraudguard" {
 
 # Cluster EKS (si AWS)
 resource "aws_eks_cluster" "fraudguard" {
-  count = var.cloud_provider == "_______" ? 1 : 0 # aws
+  count = var.cloud_provider == "aws" ? 1 : 0 # aws
   name = var.cluster_name
   role_arn = aws_iam_role.eks.arn
   vpc_config {
@@ -1123,9 +1234,7 @@ resource "aws_eks_cluster" "fraudguard" {
 }
 
 output "cluster_endpoint" {
-  value = var.cloud_provider == "gcp" ?
-    google_container_cluster.fraudguard[0].endpoint :
-    aws_eks_cluster.fraudguard[0].endpoint
+  value = var.cloud_provider == "gcp" ? google_container_cluster.fraudguard[0].endpoint : aws_eks_cluster.fraudguard[0].endpoint
 }
 ```
 
@@ -1144,6 +1253,7 @@ terraform apply -var="cloud_provider=aws" -var="region=eu-west-3"
 ## 4.3 — Failover DNS et procédure de bascule
 
 Créez la procédure `RUNBOOK_DR.md` :
+Pas de valeurs car pas fait sur GCP
 
 ```markdown
 # Runbook Disaster Recovery — Bascule GCP → AWS
@@ -1197,6 +1307,13 @@ aws route53 change-resource-record-sets \
 > **Question :** Le coût mensuel du cluster EKS DR en "warm standby" (avec 3 nodes minimum) est de **~450€**. La direction propose de passer en "cold standby" (cluster détruit, recréé en cas de DR avec Terraform). Quel impact sur le RTO ? Cette économie est-elle pertinente pour FraudGuard ?
 >
 > **Réponse :**
+> **Impact RTO**
+> Cold standby : création cluster EKS via Terraform = **+15 à 25 min** minimum, portant le RTO total à **~35-40 min** au lieu de 15 min.
+> 
+> **Économie pertinente ?**
+> **Non.** FraudGuard est un système anti-fraude critique — chaque minute de downtime = transactions frauduleuses non détectées. Le coût réputationnel et réglementaire (DORA, PCI-DSS) d'une panne prolongée dépasse largement **450€/mois**.
+> 
+> **Compromis possible** : passer à 2 nodes spot instances → économie ~40% sans sacrifier le RTO.
 
 ---
 

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fraudguard-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Auguste-p/Dev_cloud.git
+    targetRevision: main
+    # Chemin contenant TOUTES les Applications enfants
+    path: apps # apps
+  directory:
+    recurse: true # Découvrir les Applications dans tous les sous-dossiers
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true # true (supprimer les ressources retirées du Git)
+      selfHeal: true # true (corriger automatiquement les drifts)
+  syncOptions:
+    - CreateNamespace=true
