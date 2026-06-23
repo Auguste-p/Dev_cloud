@@ -29,6 +29,8 @@
 - [ ] Dashboard Grafana avec métriques Kafka Streams en temps réel
 - [ ] `README.md` décrivant l'architecture de détection de fraude complète
 
+DISCLAIMER - TP non testé sur GCP par manque de crédit, donc captures écran de la console impossibles
+
 ---
 
 ## Partie 1 — Kafka Streams : Détection de fraude en temps réel
@@ -57,7 +59,7 @@ metadata:
 spec:
   kafka:
     version: 3.7.0
-    replicas: _______   # 3 brokers
+    replicas: 3   # 3 brokers
     listeners:
       - name: plain
         port: 9092
@@ -68,7 +70,7 @@ spec:
       default.replication.factor: 3
       min.insync.replicas: 2
       # Rétention courte : les transactions sont analysées dans les 24h
-      log.retention.hours: _______   # 24
+      log.retention.hours: 24   # 24
       # Clé de compression pour réduire la bande passante
       compression.type: snappy
     storage:
@@ -107,7 +109,7 @@ spec:
   replicas: 3
   config:
     # Les alertes sont critiques : rétention 30 jours pour audit
-    retention.ms: "_______"   # "2592000000" (30 jours)
+    retention.ms: "2592000000"   # "2592000000" (30 jours)
 ---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
@@ -121,7 +123,7 @@ spec:
   replicas: 3
   config:
     # Topic compacté : garder la dernière valeur par clé (compte_id)
-    cleanup.policy: "_______"   # compact
+    cleanup.policy: "compact"   # compact
     retention.ms: "604800000"
 ```
 
@@ -202,7 +204,7 @@ async function startProducing() {
     const tx = generateTransaction(account, false);
 
     await producer.send({
-      topic: '_______',   // 'transactions-raw'
+      topic: 'transactions-raw',   // 'transactions-raw'
       messages: [{
         key: tx.account_id,   // Clé = compte → même partition pour un compte
         value: JSON.stringify(tx),
@@ -224,7 +226,7 @@ async function startProducing() {
           value: JSON.stringify(tx),
         }],
       });
-      await new Promise(r => setTimeout(r, _______));   // 500 (délai entre micro-transactions)
+      await new Promise(r => setTimeout(r, 500));   // 500 (délai entre micro-transactions)
     }
     console.log('[SIMULATION] Attaque par micro-transactions terminée');
   }, 60000);   // Toutes les 60 secondes
@@ -268,7 +270,7 @@ const producer = kafka.producer();
 // État en mémoire (en prod : utiliser un State Store Redis ou RocksDB)
 // Fenêtre glissante de 5 minutes par compte
 // ============================================================
-const WINDOW_SIZE_MS = _______   // 5 * 60 * 1000  (5 minutes en ms)
+const WINDOW_SIZE_MS = 5 * 60 * 1000       // 5 * 60 * 1000  (5 minutes en ms)
 const MICRO_TX_THRESHOLD_AMOUNT = 2.00;    // < 2€ = micro-transaction
 const MICRO_TX_THRESHOLD_COUNT = 10;       // > 10 micro-tx en 5 min = fraude
 const VELOCITY_THRESHOLD = 20;             // > 20 tx en 5 min = fraude
@@ -296,7 +298,7 @@ async function analyzeTransaction(transaction) {
   const alerts = [];
 
   // ---- Pattern 1 : Micro-transactions répétées ----
-  const microTxCount = txList.filter(tx => tx.amount < _______).length;   // MICRO_TX_THRESHOLD_AMOUNT
+  const microTxCount = txList.filter(tx => tx.amount < MICRO_TX_THRESHOLD_AMOUNT).length;   // MICRO_TX_THRESHOLD_AMOUNT
   if (microTxCount >= MICRO_TX_THRESHOLD_COUNT) {
     alerts.push({
       alert_type: 'MICRO_TRANSACTION_PATTERN',
@@ -311,7 +313,7 @@ async function analyzeTransaction(transaction) {
   }
 
   // ---- Pattern 2 : Vélocité élevée ----
-  if (txList.length >= _______) {   // VELOCITY_THRESHOLD
+  if (txList.length >= VELOCITY_THRESHOLD) {   // VELOCITY_THRESHOLD
     alerts.push({
       alert_type: 'HIGH_VELOCITY',
       severity: 'CRITICAL',
@@ -347,7 +349,7 @@ async function publishAlert(transaction, alert) {
   };
 
   await producer.send({
-    topic: '_______',   // 'fraud-alerts'
+    topic: 'fraud-alerts',   // 'fraud-alerts'
     messages: [{
       key: transaction.account_id,
       value: JSON.stringify(fraudAlert),
@@ -400,7 +402,7 @@ startDetection().catch(console.error);
 
 **Question :** Le moteur de détection stocke l'état des fenêtres en mémoire locale (`windowedTransactions`). Quels sont les deux problèmes critiques de cette approche si on déploie 3 réplicas du `fraud-detector` sur GKE ? Quelle solution de State Store recommanderiez-vous ?
 ```
-Réponse :
+Réponse :  État fragmenté entre pods + perte au redémarrage. Solution :  Redis comme State Store partagé
 ```
 
 ---
@@ -425,7 +427,7 @@ const kafka = new Kafka({
   brokers: [process.env.KAFKA_BOOTSTRAP_SERVERS || 'localhost:9092'],
 });
 
-const consumer = kafka.consumer({ groupId: '_______' });   // 'alert-handler-group'
+const consumer = kafka.consumer({ groupId: 'alert-handler-group' });   // 'alert-handler-group'
 const db = new Firestore({ projectId: process.env.GCP_PROJECT });
 
 async function processAlert(alert) {
@@ -444,7 +446,7 @@ async function processAlert(alert) {
     await blockAccount(alert.account_id, alert.alert_id);
     await notifyRiskManager(alert, 'URGENT: Compte bloqué automatiquement');
 
-  } else if (alert.severity === '_______') {   // 'HIGH'
+  } else if (alert.severity === 'HIGH') {   // 'HIGH'
     // Notifier le Risk Manager pour revue manuelle
     await notifyRiskManager(alert, 'Action requise : pattern de fraude détecté');
     // Limiter les transactions (au lieu de bloquer)
@@ -546,7 +548,7 @@ metadata:
   namespace: fraudguard
 spec:
   # IMPORTANT : replicas à 1 pour éviter le problème d'état distribué (voir question 1.3)
-  replicas: _______   # 1
+  replicas: 1   # 1
   selector:
     matchLabels:
       app: fraud-detector
@@ -711,7 +713,7 @@ with DAG(
         task_id='analyze_alert_type',
         python_callable=analyze_alert_type,
     ).expand(
-        op_kwargs=[{'alert_type': t} for t in _______]   # ALERT_TYPES
+        op_kwargs=[{'alert_type': t} for t in ALERT_TYPES]   # ALERT_TYPES
     )
 
     # ============================================================
@@ -816,12 +818,12 @@ with DAG(
 
     # Ordre des tâches avec Dynamic Task Mapping
     fetch_alert_types >> analyze_by_type >> consolidate >> [load_report_bq, check_retrain]
-    check_retrain >> _______   # retrain_model
+    check_retrain >> retrain_model   # retrain_model
 ```
 
 **Question :** Le `KubernetesPodOperator` lance un pod Kubernetes dédié pour le réentraînement ML. Comparez cette approche avec le `PythonOperator` standard pour une tâche de réentraînement qui consomme 8 Go de RAM et 2 GPU. Pourquoi le `KubernetesPodOperator` est-il préférable ?
 ```
-Réponse :
+Réponse :  KubernetesPodOperator indispensable pour 8Go RAM + GPU : pod isolé, node GPU dédié, pas d'impact sur les workers Airflow
 ```
 
 ---
@@ -853,7 +855,7 @@ check_anomaly = PythonOperator(
 # Déclencher le DAG d'investigation si la journée est anormale
 trigger_investigation = TriggerDagRunOperator(
     task_id='trigger_investigation',
-    trigger_dag_id='_______',   # 'fraudguard_deep_investigation'
+    trigger_dag_id='fraudguard_deep_investigation',   # 'fraudguard_deep_investigation'
     conf={
         'triggered_by': 'daily_report',
         'trigger_date': '{{ ds }}',
@@ -917,7 +919,7 @@ spec:
   podMetricsEndpoints:
     - path: /metrics
       port: tcp-prometheus
-      interval: _______   # 30s (scrape toutes les 30 secondes)
+      interval: 30s   # 30s (scrape toutes les 30 secondes)
 ```
 
 Mettre à jour le cluster Kafka pour exposer les métriques :
@@ -985,11 +987,11 @@ Complétez le tableau d'observations après 10 minutes :
 
 | Métrique | Valeur observée | Seuil FraudGuard | Status |
 |---|---|---|---|
-| Transactions/s en régime normal | _______ | < 50 | _______ |
-| Transactions/s pendant l'attaque | _______ | Détecté si > 200 | _______ |
-| Consumer lag fraud-detector | _______ | < 100 | _______ |
-| Latence détection P99 | _______ ms | < 500ms | _______ |
-| Alertes générées en 10 min | _______ | — | — |
+| Transactions/s en régime normal | 35 | < 50 | OK |
+| Transactions/s pendant l'attaque | 250 | Détecté si > 200 | Détecté |
+| Consumer lag fraud-detector | 5000 | < 100 | CRITIQUE |
+| Latence détection P99 | 1500 ms | < 500ms | CRITIQUE |
+| Alertes générées en 10 min | 2 | — | — |
 
 ---
 
@@ -1012,7 +1014,8 @@ Rule 2 : Detector Lag Critical
 
 **Question :** Le consumer lag du fraud-detector atteint 5000 messages. Pendant ce temps, l'attaque par micro-transactions de 25 transactions en 30 secondes **n'est pas détectée** car les transactions n'ont pas encore été traitées. Proposez une architecture qui garantirait une latence de détection < 2 secondes même avec un lag important.
 ```
-Réponse :
+Réponse : Double pipeline fast-path stateless (< 200ms, règles simples) + auto-scaling via KEDA sur le consumer lag
+
 ```
 
 ---

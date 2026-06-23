@@ -20,6 +20,12 @@ spec:
       log.retention.hours: 24   # 24
       # Clé de compression pour réduire la bande passante
       compression.type: snappy
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics-config
+          key: kafka-metrics-config.yml
     storage:
       type: persistent-claim
       size: 10Gi
